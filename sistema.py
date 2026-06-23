@@ -604,39 +604,43 @@ carregar_governanca()
 # Carrega a lista mestre mensal em memória (pode ser usada pelo módulo Mensal)
 PRODUTOS_MESTRE_MENSAL = carregar_produtos_mensal()
 
-if not st.session_state.logado:
-    st.title("🔐 Portal AC Batista - Login")
-    u_in = st.text_input("Usuário").strip()
-    s_in = st.text_input("Senha", type="password").strip()
-    if st.button("Entrar"):
-        if u_in.lower() == "admin" and s_in == "123":
-            st.session_state.logado, st.session_state.usuario, st.session_state.nivel, st.session_state.filial_nome = True, "Jardel (Diretor)", "Admin", "GLOBAL"
-            st.rerun()
-        elif os.path.exists("BD_USUARIOS.xlsx"):
+        else:
             try:
-                df = pd.read_excel("BD_USUARIOS.xlsx")
-                df.columns = [c.strip().upper() for c in df.columns]
-                val = df[df['USUARIO'].astype(str).str.strip() == u_in]
-                if not val.empty:
-                    s_c = str(int(val['SENHA'].values)) if isinstance(val['SENHA'].values, (int, float)) else str(val['SENHA'].values).strip()
-                    if s_in == s_c:
-                        st.session_state.logado, st.session_state.usuario = True, str(val['NOME'].values).strip()
-                        cargo = str(val['FILIAL'].values).strip().upper()
-                        st.session_state.filial_nome = cargo
-                        st.session_state.nivel = "Fornecedor" if cargo == "FORNECEDOR" else ("Admin" if cargo == "ADMINISTRATIVO" else "Nutri")
-                        st.rerun()
-                    else: st.error("❌ Senha incorreta.")
-                else: st.error("❌ Usuário não localizado.")
-            except Exception as e: st.error(f"Erro: {e}")
-        else: st.error("❌ BD_USUARIOS.xlsx não encontrado.")
-else:
-    st.sidebar.title("🏢 AC Batista ERP")
-    st.sidebar.write(f"👤 Usuário: **{st.session_state.usuario}**")
-    st.sidebar.write(f"🔰 Acesso: **{st.session_state.nivel}**")
-    if st.sidebar.button("⚙️ Sair/Logoff"):
-        st.session_state.logado = False
-        st.rerun()
-
+                client = conectar_sheets_nativo()
+                if client:
+                    sheet = client.worksheet("BD_USUARIOS")
+                    dados = sheet.get_all_records()
+                    df = pd.DataFrame(dados)
+                    
+                    df.columns = [c.strip().upper() for c in df.columns]
+                    val = df[df['USUARIO'].astype(str).str.strip() == u_in]
+                    
+                    if not val.empty:
+                        s_c = str(val['SENHA'].values[0]).strip()
+                        
+                        if str(s_in).strip() == s_c:
+                            st.session_state.logado = True
+                            st.session_state.usuario = str(val['USUARIO'].values[0]).strip()
+                            st.session_state.filial_nome = str(val['FILIAL'].values[0]).strip().upper()
+                            
+                            cargo = st.session_state.filial_nome
+                            st.session_state.nivel = "Fornecedor" if cargo == "FORNECEDOR" else ("Admin" if cargo == "ADMINISTRATIVO" else "Nutricionista")
+                            st.rerun()
+                        else:
+                            st.error("❌ Senha incorreta.")
+                    else:
+                        st.error("❌ Usuário não localizado.")
+                else:
+                    st.error("❌ Erro de conexão com o Google Sheets.")
+            except Exception as e:
+                st.error(f"Erro ao acessar banco na nuvem: {e}")
+                else:
+        st.sidebar.title("🏢 AC Batista ERP")
+        st.sidebar.write(f"👤 Usuário: **{st.session_state.usuario}**")
+        st.sidebar.write(f"🔐 Acesso: **{st.session_state.nivel}**")
+        if st.sidebar.button("🚪 Sair/Logoff"):
+            st.session_state.logado = False
+            st.rerun()
     if st.session_state.nivel == "Admin":
         mostrar_painel_diretor()
 

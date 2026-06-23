@@ -685,14 +685,51 @@ PRODUTOS_MESTRE_MENSAL = carregar_produtos_mensal()
 # --- ADICIONANDO A INTERFACE NOVA NO FINAL DO ARQUIVO COM TRAVA ---
 if "logado" in st.session_state and st.session_state.logado and st.session_state.usuario != "Jardel":
     st.title("🥩 Pedido Semanal")
-    st.subheader("Filial: Barbacena")
-    
+st.subheader(f"Filial: {st.session_state.get('filial_nome', 'Não Identificada').title()}")    
     # Abas por Categoria
     aba_proteinas, aba_hortifruti, aba_mercearia = st.tabs(["🥩 Proteínas", "🥬 Hortifrúti", "🧃 Mercearia"])
     
     with aba_proteinas:
-        st.markdown('<div style="background:#fff; padding:15px; border-radius:10px; box-shadow:0 4px 6px rgba(0,0,0,0.1); margin-bottom:15px;">', unsafe_allow_html=True)
-        st.number_input("Qtd:", min_value=0.0, step=1.0, key="alcatra", label_visibility="collapsed")
+                # 1. Identifica a filial da nutricionista logada (Ex: "BARBACENA", "TEJUCO")
+                filial_usuario = st.session_state.get("filial_nome", "BARBACENA").upper()
+                
+                # 2. Monta o nome exato da aba do Sheets (Ex: "PROTEINA_BARBACENA")
+                nome_aba_dinamica = f"PROTEINA_{filial_usuario}"
+                
+                st.caption(f"📋 Carregando catálogo da aba: {nome_aba_dinamica}")
+                
+                try:
+                    # 3. Conecta ao Google Sheets usando a função nativa do seu sistema
+                    client = conectar_sheets_nativo()
+                    if client:
+                        # Abre a aba específica do restaurante que está logado
+                        sheet = client.worksheet(nome_aba_dinamica)
+                        dados = sheet.get_all_records()
+                        df_produtos = pd.DataFrame(dados)
+                        
+                        # Padroniza os nomes das colunas para evitar erros de digitação
+                        df_produtos.columns = [c.strip().upper() for c in df_produtos.columns]
+                        
+                        # 4. Filtra linhas em branco e extrai a lista de carnes da coluna PRODUTO
+                        lista_itens = df_produtos["PRODUTO"].dropna().tolist()
+                        lista_itens = [item for item in lista_itens if str(item).strip() != ""]
+                        
+                        # 5. Monta os cartões na tela automaticamente para cada item da planilha
+                        for item in lista_itens:
+                            st.markdown(f'''
+                                <div style="background:#fff; padding:15px; border-radius:10px; 
+                                box-shadow:0 4px 6px rgba(0,0,0,0.1); margin-bottom:5px; margin-top:15px;">
+                                    <span style="font-size:16px; font-weight:bold; color:#333;">🥩 {item}</span>
+                                </div>
+                            ''', unsafe_allow_html=True)
+                            
+                            # Cria a caixa de quantidade com uma chave única baseada no nome do produto
+                            st.number_input("Quantidade:", min_value=0.0, step=1.0, key=f"qtd_{item}", label_visibility="collapsed")
+                    else:
+                        st.error("❌ Não foi possível conectar ao Google Sheets para carregar os produtos.")
+                        
+                except Exception as e:
+                    st.error(f"⚠️ Erro ao carregar aba {nome_aba_dinamica}. Verifique se o nome da aba na planilha está correto!")
         
     with aba_hortifruti:
         st.markdown('<div style="background:#fff; padding:15px; border-radius:10px; box-shadow:0 4px 6px rgba(0,0,0,0.1); margin-bottom:15px;">', unsafe_allow_html=True)

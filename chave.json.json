@@ -1,0 +1,13 @@
+{
+  "type": "service_account",
+  "project_id": "primordial-port-498812-m6",
+  "private_key_id": "f73b10bdea8e087d785e82f7ea34d91c379cdb3e",
+  "private_key": "-----BEGIN PRIVATE KEY-----\nMIIEvAIBADANBgkqhkiG9w0BAQEFAASCBKYwggSiAgEAAoIBAQDIZE8UQiirMZdJ\nh84eYevKxM67rWX7S/IKdsw9n3dtVztZ40N5uTMlgUTc2PULT2plwLXkgrCXQMbv\nSOeOfUk7g4KolDCBeraGL3VWX9uWUdn4iBmgRnbjnPKhr2oDnYiFMa+ggww90HpJ\nZ5ijfBoWQMMuBqpVTXJqB2mwGIKy+G1qe01NuDvZWCsBl2ttseTsxXcXM19hR4v8\nIm24Mf1gEReELgvCkubQaQpz5io+vlV9F8TScj3/JvpzIyfptj8RbVISFziTgkQD\nYHdOpTsQsbCKX+cVHa5xxklqBMuj6YFaRGekH0GsTH3t6JwjgheuQXTjZwagpmDm\nl7V8c7f1AgMBAAECggEAIsTcv6wW+FUbZcOtbLIawkzRfdjBKA/uSAiCuXJwu0T2\nZEs9SuJqUGiUdSkjozm9QThlludiEmxH1/6zRpLQYQYZZnyHyf9rqe6UEk+Bfxxm\nkGu03o07VZTGuG0CHOx5YnrTeSsjtZn1jcTuw/blY9UKyHKZnUFZx7HPkaE/FCQd\n3fZ5mYim0g2S34GXH4dW9sIUoK7xxTUN5qHFQrVLdFTBsJfQ8VfkrueHGk1IXNGF\nyQhYwsGPLtxZhLVZhIkcnvHBD8KSkSR158D9yqo9TJpTf90qdUa0vf/pWHkHPcFO\nuAxxhIPGTOK1oNolN9F6W559yw0bNE2Wifhf9HbqJQKBgQDpXtH6kIIAahBBTz98\nt0FtFvBWL5hiplMjrt9ZP6DeBdvuQ+B+61R6rc7jg2g/XZ5i6M5LvqMGAmukHXOM\nLl72y7ciTdWZkTY43KesrZwre4Sra9GWM7XK82OAybsczD62u3Lc669zFObmU+p2\npCmAkj3IO/TzLfv5zihWhxpCXwKBgQDb0tRyPDRPgDO+FhzMTzo44rWOWQPd83ei\nuy4OCzqwmEW7BIS37YkqlKZ9QnoeywTq+s9jK2VzunZ7khHllBA5+Zue4Zl7ze4j\nmJMRu/AvMfH3C1CCZmlOe+rNTN4B/UZTcunpQVWPfnOmyRLKKU6AE3ZwQspYZbPc\npd3BgNKuKwKBgB//ilcK3WhlIplx3kihb+0fShDnMcPE/n1UCvfXy5zlvMQstmlw\npwKzNjzn1bFqir8RIMgt+XhneI7mIuPDr+2y/QdNGM6XpJGjX7JDk7g6lXRTskcg\nC/sp6CjOgENwleDETvmPr1zeLtLCCtH9rFsesi30Wp/FXFliNRG4MJeNAoGAQexa\nNeAEOAtUeR8ch9ECvuiOViAv3rITIMRNrXyEn00rLEjQnHAqAJEP1OTIxs9PrECH\nTVBIXop+2dQWdekPbLOEjgNOCijZz+cDw/++qgiqbdIA1PptflH/Oo5gzevs2T3P\nFFq5lAzyFgSbE/GLTzGHBWeiUxw88mDzvgIqLH0CgYAENRJJlaEQESQ6TFEudrNG\nF2Gazw43+ufg2ReovdwQmjvVeRgnbAiMPJfMHsd5hPwDv7cYw3aQT6Ehj0WWGgBQ\n9Fj3u7jXUiJDN6UOWR7Lox7uxSHPd9XWun1FZJz9qNFNlo4jTiZ3jJt4W8ploCT7\ndBv2yD4TtF8VqK9UT2rQTw==\n-----END PRIVATE KEY-----\n",
+  "client_email": "python-compras@primordial-port-498812-m6.iam.gserviceaccount.com",
+  "client_id": "107140612180216622085",
+  "auth_uri": "https://accounts.google.com/o/oauth2/auth",
+  "token_uri": "https://oauth2.googleapis.com/token",
+  "auth_provider_x509_cert_url": "https://www.googleapis.com/oauth2/v1/certs",
+  "client_x509_cert_url": "https://www.googleapis.com/robot/v1/metadata/x509/python-compras%40primordial-port-498812-m6.iam.gserviceaccount.com",
+  "universe_domain": "googleapis.com"
+}

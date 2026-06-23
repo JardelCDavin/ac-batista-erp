@@ -678,20 +678,22 @@ else:
     elif modulo_selecionado == "�📋 Fichas Técnicas (Cardápio)":
         st.title("🥗 Área de Nutrição - Fichas Técnicas")
 
-# # --- ADICIONANDO A INTERFACE NOVA NO FINAL DO ARQUIVO ---
-st.title("📋 Pedido Semanal")
-st.subheader("Filial: Barbacena")
+# --- ADICIONANDO A INTERFACE NOVA NO FINAL DO ARQUIVO COM TRAVA ---
+if "logado" in st.session_state and st.session_state.logado:
+    st.title("📋 Pedido Semanal")
+    st.subheader("Filial: Barbacena")
 
-# Abas por Categoria
-aba_proteinas, aba_hortifruti, aba_mercearia = st.tabs(["🥩 Proteínas", "🥬 Hortifrúti", "🌾 Mercearia"])
+    # Abas por Categoria
+    aba_proteinas, aba_hortifruti, aba_mercearia = st.tabs(["🥩 Proteínas", "🥬 Hortifrúti", "🌾 Mercearia"])
 
-with aba_proteinas:
-  with aba_proteinas:
-    st.markdown('<div style="background:#fff; padding:15px; border-radius:10px; box-shadow:0 4px 6px rgba(0,0,0,0.1); margin-bottom:15px; border-left:5px solid #1E88E5;"><b>Alcatra</b><br><small>Unidade: KG</small></div>', unsafe_allow_html=True)
-    st.number_input("Qtd:", min_value=0.0, step=1.0, key="alcatra", 
-                    label_visibility="collapsed")
+    with aba_proteinas:
+        st.markdown('<div style="background:#fff; padding:15px; border-radius:10px; box-shadow:0 4px 6px rgba(0,0,0,0.1); margin-bottom:15px; border-left:5px solid #1E88E5;"><b>Alcatra</b><br><small>Unidade: KG</small></div>', unsafe_allow_html=True)
+        st.number_input("Qtd:", min_value=0.0, step=1.0, key="alcatra", label_visibility="collapsed")
 
-with aba_hortifruti:
-    st.markdown('<div style="background:#fff; padding:15px; border-radius:10px; box-shadow:0 4px 6px rgba(0,0,0,0.1); margin-bottom:15px; border-left:5px solid #1E88E5;"><b>Tomate</b><br><small>Unidade: KG</small></div>', unsafe_allow_html=True)
-    st.number_input("Qtd:", min_value=0.0, step=1.0, key="tomate", 
-                    label_visibility="collapsed")
+    with aba_hortifruti:
+        st.markdown('<div style="background:#fff; padding:15px; border-radius:10px; box-shadow:0 4px 6px rgba(0,0,0,0.1); margin-bottom:15px; border-left:5px solid #1E88E5;"><b>Tomate</b><br><small>Unidade: KG</small></div>', unsafe_allow_html=True)
+        st.number_input("Qtd:", min_value=0.0, step=1.0, key="tomate", label_visibility="collapsed")
+
+    st.write("---")
+    if st.button("✔️ Salvar e Enviar Pedido", type="primary", use_container_width=True):
+        st.success("Pedido enviado com sucesso!")

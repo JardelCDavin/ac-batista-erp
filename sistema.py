@@ -603,54 +603,54 @@ carregar_governanca()
 
 # Carrega a lista mestre mensal em memória (pode ser usada pelo módulo Mensal)
 PRODUTOS_MESTRE_MENSAL = carregar_produtos_mensal()
-
-        else:
-            try:
-                client = conectar_sheets_nativo()
-                if client:
-                    sheet = client.worksheet("BD_USUARIOS")
-                    dados = sheet.get_all_records()
-                    df = pd.DataFrame(dados)
+try:
+    u_in = st.session_state.get('usuario_login', '')
+    s_in = st.session_state.get('senha_login', '')
+    client = conectar_sheets_nativo()
+    if client:
+                sheet = client.worksheet("BD_USUARIOS")
+                dados = sheet.get_all_records()
+                df = pd.DataFrame(dados)
+                
+                df.columns = [c.strip().upper() for c in df.columns]
+                val = df[df['USUARIO'].astype(str).str.strip() == u_in]
+                
+                if not val.empty:
+                    s_c = str(val['SENHA'].values[0]).strip()
                     
-                    df.columns = [c.strip().upper() for c in df.columns]
-                    val = df[df['USUARIO'].astype(str).str.strip() == u_in]
-                    
-                    if not val.empty:
-                        s_c = str(val['SENHA'].values[0]).strip()
+                    if str(s_in).strip() == s_c:
+                        st.session_state.logado = True
+                        st.session_state.usuario = str(val['USUARIO'].values[0]).strip()
+                        st.session_state.filial_nome = str(val['FILIAL'].values[0]).strip().upper()
                         
-                        if str(s_in).strip() == s_c:
-                            st.session_state.logado = True
-                            st.session_state.usuario = str(val['USUARIO'].values[0]).strip()
-                            st.session_state.filial_nome = str(val['FILIAL'].values[0]).strip().upper()
-                            
-                            cargo = st.session_state.filial_nome
-                            st.session_state.nivel = "Fornecedor" if cargo == "FORNECEDOR" else ("Admin" if cargo == "ADMINISTRATIVO" else "Nutricionista")
-                            st.rerun()
-                        else:
-                            st.error("❌ Senha incorreta.")
+                        cargo = st.session_state.filial_nome
+                        st.session_state.nivel = "Fornecedor" if cargo == "FORNECEDOR" else ("Admin" if cargo == "ADMINISTRATIVO" else "Nutricionista")
+                        st.rerun()
                     else:
-                        st.error("❌ Usuário não localizado.")
+                        st.error("❌ Senha incorreta.")
                 else:
-                    st.error("❌ Erro de conexão com o Google Sheets.")
-            except Exception as e:
-                st.error(f"Erro ao acessar banco na nuvem: {e}")
-                else:
+                    st.error("❌ Usuário não localizado.")
+    else:
+                st.error("❌ Erro de conexão com o Google Sheets.")
+except Exception as e:
+            st.error(f"Erro ao acessar banco na nuvem: {e}")
+else:
+
         st.sidebar.title("🏢 AC Batista ERP")
         st.sidebar.write(f"👤 Usuário: **{st.session_state.usuario}**")
         st.sidebar.write(f"🔐 Acesso: **{st.session_state.nivel}**")
         if st.sidebar.button("🚪 Sair/Logoff"):
             st.session_state.logado = False
             st.rerun()
-    if st.session_state.nivel == "Admin":
-        mostrar_painel_diretor()
-
-    st.sidebar.write("---")
-    modulos_basicos = ["🛒 Compras & Suprimentos", "🥩 Auditoria Semanal (Proteínas)", "📋 Fichas Técnicas (Cardápio)"]
-    if st.session_state.nivel == "Admin":
+        if st.session_state.nivel == "Admin":
+         mostrar_painel_diretor()
+st.sidebar.write("---")
+modulos_basicos = ["🛒 Compras & Suprimentos", "🥩 Auditoria Semanal (Proteínas)", "📋 Fichas Técnicas (Cardápio)"]
+if st.session_state.nivel == "Admin":
         modulos_basicos.append("📌 Módulo de Cotação & Consolidação")
-    modulo_selecionado = st.sidebar.radio("Módulo:", modulos_basicos)
+modulo_selecionado = st.sidebar.radio("Módulo:", modulos_basicos)
 
-    if modulo_selecionado == "🛒 Compras & Suprimentos":
+if modulo_selecionado == "🛒 Compras & Suprimentos":
         st.title("🗃️ Gestão de Compras & Módulo Mensal")
         col1, col2 = st.columns(2)
         with col1:
@@ -665,7 +665,7 @@ PRODUTOS_MESTRE_MENSAL = carregar_produtos_mensal()
             else:
                 if st.button("GERAR COMPRAS DE PROTEÍNA SEMANAL"):
                     consolidar_proteina_semanal_geral()
-    elif modulo_selecionado == "🥩 Auditoria Semanal (Proteínas)":
+elif modulo_selecionado == "🥩 Auditoria Semanal (Proteínas)":
         st.title("🥩 Auditoria Semanal (Proteínas)")
         tab1, tab2 = st.tabs(["📝 Lançar Pedido", "📊 Consolidado"])
         
@@ -677,9 +677,9 @@ PRODUTOS_MESTRE_MENSAL = carregar_produtos_mensal()
                 consolidar_proteina_semanal_geral()
             else:
                 consolidar_proteina_semanal_geral()
-    elif modulo_selecionado == "� Módulo de Cotação & Consolidação":
+elif modulo_selecionado == "� Módulo de Cotação & Consolidação":
         modulo_cotacao_consolidacao()
-    elif modulo_selecionado == "�📋 Fichas Técnicas (Cardápio)":
+elif modulo_selecionado == "�📋 Fichas Técnicas (Cardápio)":
         st.title("🥗 Área de Nutrição - Fichas Técnicas")
 
 # --- ADICIONANDO A INTERFACE NOVA NO FINAL DO ARQUIVO COM TRAVA ---
@@ -687,54 +687,76 @@ if "logado" in st.session_state and st.session_state.logado and st.session_state
     st.title("🥩 Pedido Semanal")
 st.subheader(f"Filial: {st.session_state.get('filial_nome', 'Não Identificada').title()}")    
     # Abas por Categoria
-    aba_proteinas, aba_hortifruti, aba_mercearia = st.tabs(["🥩 Proteínas", "🥬 Hortifrúti", "🧃 Mercearia"])
+aba_proteinas, aba_hortifruti, aba_mercearia = st.tabs(["🥩 Proteínas", "🥬 Hortifrúti", "🧃 Mercearia"])
     
-    with aba_proteinas:
-                # 1. Identifica a filial da nutricionista logada (Ex: "BARBACENA", "TEJUCO")
-                filial_usuario = st.session_state.get("filial_nome", "BARBACENA").upper()
-                
-                # 2. Monta o nome exato da aba do Sheets (Ex: "PROTEINA_BARBACENA")
-                nome_aba_dinamica = f"PROTEINA_{filial_usuario}"
-                
-                st.caption(f"📋 Carregando catálogo da aba: {nome_aba_dinamica}")
-                
-                try:
-                    # 3. Conecta ao Google Sheets usando a função nativa do seu sistema
-                    client = conectar_sheets_nativo()
-                    if client:
-                        # Abre a aba específica do restaurante que está logado
-                        sheet = client.worksheet(nome_aba_dinamica)
-                        dados = sheet.get_all_records()
-                        df_produtos = pd.DataFrame(dados)
-                        
-                        # Padroniza os nomes das colunas para evitar erros de digitação
-                        df_produtos.columns = [c.strip().upper() for c in df_produtos.columns]
-                        
-                        # 4. Filtra linhas em branco e extrai a lista de carnes da coluna PRODUTO
-                        lista_itens = df_produtos["PRODUTO"].dropna().tolist()
-                        lista_itens = [item for item in lista_itens if str(item).strip() != ""]
-                        
-                        # 5. Monta os cartões na tela automaticamente para cada item da planilha
-                        for item in lista_itens:
-                            st.markdown(f'''
-                                <div style="background:#fff; padding:15px; border-radius:10px; 
-                                box-shadow:0 4px 6px rgba(0,0,0,0.1); margin-bottom:5px; margin-top:15px;">
-                                    <span style="font-size:16px; font-weight:bold; color:#333;">🥩 {item}</span>
-                                </div>
-                            ''', unsafe_allow_html=True)
-                            
-                            # Cria a caixa de quantidade com uma chave única baseada no nome do produto
-                            st.number_input("Quantidade:", min_value=0.0, step=1.0, key=f"qtd_{item}", label_visibility="collapsed")
-                    else:
-                        st.error("❌ Não foi possível conectar ao Google Sheets para carregar os produtos.")
-                        
-                except Exception as e:
-                    st.error(f"⚠️ Erro ao carregar aba {nome_aba_dinamica}. Verifique se o nome da aba na planilha está correto!")
+with aba_proteinas:
+        # 1. Identifica a filial da nutricionista logada (Ex: "BARBACENA", "DONA MARIA")
+        filial_usuario = st.session_state.get("filial_nome", "BARBACENA").upper().strip()
         
-    with aba_hortifruti:
+        # 2. DICIONÁRIO DE VÍNCULOS: Aponta dinamicamente qual contrato ler
+        if filial_usuario in ["CENTRO", "TEJUCO", "MATOSINHOS", "COLONIA", "BARBACENA"]:
+            nome_aba_contrato = "CONTRATO_POPULAR_GERAL"
+        elif filial_usuario == "LEOPOLDINA":
+            nome_aba_contrato = "CONTRATO_LEOPOLDINA"
+        else:
+            nome_aba_contrato = "CONTRATO_DONA_MARIA"
+            
+        nome_aba_produtos = f"PROTEINA_{filial_usuario}"
+        
+        st.caption(f"📋 Contrato ativo: **{nome_aba_contrato}** | Catálogo: **{nome_aba_produtos}**")
+        
+        try:
+            client = conectar_sheets_nativo()
+            if client:
+                # --- LEITURA DO CONTRATO (LIMITES) ---
+                sheet_contrato = client.worksheet(nome_aba_contrato)
+                dados_contrato = sheet_contrato.get_all_records()
+                df_contrato = pd.DataFrame(dados_contrato)
+                df_contrato.columns = [c.strip().upper() for c in df_contrato.columns]
+                
+                # --- LEITURA DOS PRODUTOS DA FILIAL ---
+                sheet_produtos = client.worksheet(nome_aba_produtos)
+                dados_produtos = sheet_produtos.get_all_records()
+                df_produtos = pd.DataFrame(dados_produtos)
+                df_produtos.columns = [c.strip().upper() for c in df_produtos.columns]
+                
+                lista_itens = df_produtos["PRODUTO"].dropna().tolist()
+                lista_itens = [item for item in lista_itens if str(item).strip() != ""]
+                
+                # 3. MONTA OS CARTÕES E A TRAVA DE SEGURANÇA
+                for item in lista_itens:
+                    st.markdown(f'''
+                        <div style="background:#fff; padding:15px; border-radius:10px; 
+                        box-shadow:0 4px 6px rgba(0,0,0,0.1); margin-bottom:5px; margin-top:15px;">
+                            <span style="font-size:16px; font-weight:bold; color:#333;">🥩 {item}</span>
+                        </div>
+                    ''', unsafe_allow_html=True)
+                    
+                    # Captura a quantidade digitada pela nutricionista
+                    qtd_digitada = st.number_input("Quantidade:", min_value=0.0, step=1.0, key=f"qtd_{item}", label_visibility="collapsed")
+                    
+                    # Busca o Limite Ativo correspondente a este produto na tabela de contrato
+                    limite_ativo = 999999.0  # Limite padrão alto caso não ache o item
+                    if "DESCRIÇÃO" in df_contrato.columns and "LIMITE ATIVO" in df_contrato.columns:
+                        linha_item = df_contrato[df_contrato["DESCRIÇÃO"].astype(str).str.strip().upper() == str(item).strip().upper()]
+                        if not linha_item.empty:
+                            limite_ativo = float(linha_item["LIMITE ATIVO"].values[0])
+                    
+                    # SE ESTOURAR A COTA: Abre a caixa de justificativa obrigatória na hora!
+                    if qtd_digitada > limite_ativo:
+                        st.warning(f"⚠️ Cota estourada! Limite permitido: **{limite_ativo} kg**. Seu pedido: **{qtd_digitada} kg**.")
+                        st.text_area(f"Justificativa obrigatória para {item}:", key=f"just_{item}", placeholder="Explique o motivo do pedido acima da cota...")
+                        
+            else:
+                st.error("❌ Não foi possível conectar ao Google Sheets.")
+                
+        except Exception as e:
+            st.error(f"⚠️ Erro ao carregar dados na nuvem: {e}")
+
+with aba_hortifruti:
         st.markdown('<div style="background:#fff; padding:15px; border-radius:10px; box-shadow:0 4px 6px rgba(0,0,0,0.1); margin-bottom:15px;">', unsafe_allow_html=True)
         st.number_input("Qtd:", min_value=0.0, step=1.0, key="tomate", label_visibility="collapsed")
         
-    st.write("---")
-    if st.button("✔️ Salvar e Enviar Pedido", type="primary", use_container_width=True):
+st.write("---")
+if st.button("✔️ Salvar e Enviar Pedido", type="primary", use_container_width=True):
         st.success("Pedido enviado com sucesso!")

@@ -40,7 +40,7 @@ def carregar_fornecedores_ativos():
     if not client:
         return ["FORNECEDOR PADRÃO"]
     try:
-        aba = client.open("Formulário sem título (Respostas)").worksheet("FORNECEDORES")
+        aba = client.open_by_key("1Qt0HIMchGH_956STdsOHZj5RzXO-cBrz7nyyiiyEB7o").worksheet("FORNECEDORES")
         dados = aba.get_all_records()
         ativos = [row['Fornecedor'] for row in dados if str(row.get('ATIVO', '')).strip().upper() == 'SIM']
         return ativos if ativos else ["FORNECEDOR PADRÃO"]
@@ -64,7 +64,7 @@ def validar_usuario_sheets(usuario, senha):
         return None, "❌ Não foi possível conectar ao Google Sheets. Verifique o arquivo chave.json e a configuração da API."
 
     try:
-        sheet = client.open("Formulário sem título (Respostas)").worksheet("BD_USUARIOS")
+        sheet = client.open_by_key("1Qt0HIMchGH_956STdsOHZj5RzXO-cBrz7nyyiiyEB7o").worksheet("BD_USUARIOS")
     except Exception as e:
         return None, f"❌ Erro ao abrir a aba BD_USUARIOS: {e}"
 

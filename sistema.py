@@ -29,12 +29,11 @@ def inicializar_gspread():
                 credenciais_dict = dict(st.secrets["gcp_service_account"])
             gc = gspread.service_account_from_dict(credenciais_dict)
             return gc
-        
-        # 2. Se não achar os secrets, procura o arquivo local do seu computador
+
+        # 2. Se não achar os secrets, não tenta mais o arquivo local em nuvem
         else:
-            caminho_local_chave = os.path.join(os.path.dirname(os.path.abspath(__file__)), "chave.json")
-            gc = gspread.service_account(filename=caminho_local_chave)
-            return gc
+            st.error("Credenciais do Google Sheets não encontradas em st.secrets. Verifique a configuração de secrets no Streamlit Cloud.")
+            return None
     except Exception as e:
         st.error(f"Erro crítico na conexão com o Google Sheets: {e}")
         return None
@@ -61,22 +60,7 @@ st.set_page_config(page_title="Portal AC Batista", layout="wide")
 
 # --- CONEXÃO COM GOOGLE SHEETS ---
 def conectar_sheets_nativo():
-    chave_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "chave.json")
-    if not os.path.exists(chave_path):
-        st.error(f"Arquivo de credenciais não encontrado: {chave_path}")
-        return None
-
-    try:
-        client = gspread.service_account(filename=chave_path)
-    except Exception as e:
-        st.error(f"Erro detalhado: {e}")
-        return None
-
-    try:
-        return client.open("Formulário sem título (Respostas)")
-    except Exception as e:
-        st.error(f"Erro ao abrir a planilha Google Sheets: {e}")
-        return None
+    return client
 
 
 def validar_usuario_sheets(usuario, senha):

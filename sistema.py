@@ -6,9 +6,8 @@ import os
 import json
 from datetime import datetime
 import urllib.parse
-from pyngrok import ngrok
-import subprocess
 
+# Inicialização segura do estado da sessão
 if 'logado' not in st.session_state:
     st.session_state.logado = False
 if 'nivel' not in st.session_state:
@@ -18,43 +17,41 @@ if 'usuario' not in st.session_state:
 if 'filial_nome' not in st.session_state:
     st.session_state.filial_nome = ""
 
+# --- CONEXÃO INTELIGENTE COM O GOOGLE SHEETS (LOCAL OU NUVEM) ---
+@st.cache_resource
+def inicializar_gspread():
+    try:
+        # 1. Tenta ler primeiro dos Secrets do Streamlit Cloud (Nuvem)
+        if "gcp_service_account" in st.secrets:
+            if "json" in st.secrets["gcp_service_account"]:
+                credenciais_dict = json.loads(st.secrets["gcp_service_account"]["json"])
+            else:
+                credenciais_dict = dict(st.secrets["gcp_service_account"])
+            gc = gspread.service_account_from_dict(credenciais_dict)
+            return gc
+        
+        # 2. Se não achar os secrets, procura o arquivo local do seu computador
+        else:
+            caminho_local_chave = os.path.join(os.path.dirname(os.path.abspath(__file__)), "chave.json")
+            gc = gspread.service_account(filename=caminho_local_chave)
+            return gc
+    except Exception as e:
+        st.error(f"Erro crítico na conexão com o Google Sheets: {e}")
+        return None
+
+# Ativa a conexão global unificada
+client = inicializar_gspread()
 
 def carregar_fornecedores_ativos():
+    if not client:
+        return ["FORNECEDOR PADRÃO"]
     try:
-        # Tenta abrir a aba correta com tratamento de espaços
         aba = client.open("Formulário sem título (Respostas)").worksheet("FORNECEDORES")
         dados = aba.get_all_records()
-        
-        # Filtra respeitando as chaves exatas 'Fornecedor' e 'ATIVO'
         ativos = [row['Fornecedor'] for row in dados if str(row.get('ATIVO', '')).strip().upper() == 'SIM']
         return ativos if ativos else ["FORNECEDOR PADRÃO"]
     except Exception as e:
-        # Se der qualquer erro de nome de coluna, não trava o sistema, retorna o padrão
         return ["FORNECEDOR PADRÃO"]
-
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-NGROK_LINK_FILE = os.path.join(BASE_DIR, "link_celular.txt")
-NGROK_PORT = 8501
-client = None
-
-# --- INICIALIZAÇÃO AUTOMÁTICA E BLINDADA DO NGROK ---
-@st.cache_resource
-def iniciar_conexao_celular():
-    import subprocess
-    from pyngrok import ngrok
-    try:
-        subprocess.run(["taskkill", "/f", "/im", "ngrok.exe"], capture_output=True)
-    except Exception:
-        pass
-    try:
-        TOKEN = "3FMl6VIvvPd1MMRs30pfJRy8Doy_2ZwK6MpHdZRkWT8V2A3d"
-        ngrok.set_auth_token(TOKEN)
-        tunnel = ngrok.connect(8501)
-        return tunnel.public_url
-    except Exception as e:
-        return f"Erro ao conectar: {e}"
-
-ngrok_url = iniciar_conexao_celular()
 
 
 # --- CONFIGURAÇÃO DA PÁGINA (LAYOUT CONGELADO) ---
@@ -64,7 +61,7 @@ st.set_page_config(page_title="Portal AC Batista", layout="wide")
 
 # --- CONEXÃO COM GOOGLE SHEETS ---
 def conectar_sheets_nativo():
-    chave_path = os.path.join(BASE_DIR, "chave.json")
+    chave_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "chave.json")
     if not os.path.exists(chave_path):
         st.error(f"Arquivo de credenciais não encontrado: {chave_path}")
         return None

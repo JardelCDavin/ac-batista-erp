@@ -9,9 +9,33 @@ import urllib.parse
 from pyngrok import ngrok
 import subprocess
 
+if 'logado' not in st.session_state:
+    st.session_state.logado = False
+if 'nivel' not in st.session_state:
+    st.session_state.nivel = "Comum"
+if 'usuario' not in st.session_state:
+    st.session_state.usuario = "Nenhum"
+if 'filial_nome' not in st.session_state:
+    st.session_state.filial_nome = ""
+
+
+def carregar_fornecedores_ativos():
+    try:
+        # Tenta abrir a aba correta com tratamento de espaços
+        aba = client.open("Formulário sem título (Respostas)").worksheet("FORNECEDORES")
+        dados = aba.get_all_records()
+        
+        # Filtra respeitando as chaves exatas 'Fornecedor' e 'ATIVO'
+        ativos = [row['Fornecedor'] for row in dados if str(row.get('ATIVO', '')).strip().upper() == 'SIM']
+        return ativos if ativos else ["FORNECEDOR PADRÃO"]
+    except Exception as e:
+        # Se der qualquer erro de nome de coluna, não trava o sistema, retorna o padrão
+        return ["FORNECEDOR PADRÃO"]
+
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 NGROK_LINK_FILE = os.path.join(BASE_DIR, "link_celular.txt")
 NGROK_PORT = 8501
+client = None
 
 # --- INICIALIZAÇÃO AUTOMÁTICA E BLINDADA DO NGROK ---
 @st.cache_resource
@@ -35,12 +59,105 @@ ngrok_url = iniciar_conexao_celular()
 
 # --- CONFIGURAÇÃO DA PÁGINA (LAYOUT CONGELADO) ---
 st.set_page_config(page_title="Portal AC Batista", layout="wide")
+# --- CONFIGURAÇÃO DA PÁGINA (LAYOUT CONGELADO) ---
+st.set_page_config(page_title="Portal AC Batista", layout="wide")
 
+# --- CONEXÃO COM GOOGLE SHEETS ---
+def conectar_sheets_nativo():
+    chave_path = os.path.join(BASE_DIR, "chave.json")
+    if not os.path.exists(chave_path):
+        st.error(f"Arquivo de credenciais não encontrado: {chave_path}")
+        return None
+
+    try:
+        client = gspread.service_account(filename=chave_path)
+    except Exception as e:
+        st.error(f"Erro detalhado: {e}")
+        return None
+
+    try:
+        return client.open("Formulário sem título (Respostas)")
+    except Exception as e:
+        st.error(f"Erro ao abrir a planilha Google Sheets: {e}")
+        return None
+
+
+def validar_usuario_sheets(usuario, senha):
+    client = conectar_sheets_nativo()
+    if not client:
+        return None, "❌ Não foi possível conectar ao Google Sheets. Verifique o arquivo chave.json e a configuração da API."
+
+    try:
+        sheet = client.worksheet("BD_USUARIOS")
+    except Exception as e:
+        return None, f"❌ Erro ao abrir a aba BD_USUARIOS: {e}"
+
+    try:
+        dados = sheet.get_all_records()
+    except Exception as e:
+        return None, f"❌ Erro ao ler dados de BD_USUARIOS: {e}"
+
+    df = pd.DataFrame(dados)
+    df.columns = [c.strip().upper() for c in df.columns]
+    u_in = str(usuario).strip().upper()
+    s_in = str(senha).strip()
+    val = df[df['USUARIO'].astype(str).str.strip().str.upper() == u_in]
+
+    if val.empty:
+        return None, "❌ Usuário não localizado."
+
+    senha_correta = str(val['SENHA'].values[0]).strip()
+    if s_in != senha_correta:
+        return None, "❌ Senha incorreta. Tente novamente."
+
+    return val.iloc[0], None
+
+# =========================================================================
+# 🛑 TRAVA DE SEGURANÇA E TELA DE LOGIN ISOLADA
+# =========================================================================
+
+# Inicializa o estado de login na memória mestre
+if "logado" not in st.session_state:
+    st.session_state.logado = False
+
+container_login = st.empty()
+
+if st.session_state.get('logado', False):
+    pass
+else:
+    with container_login.container():
+        st.markdown("""<style>[data-test-id="stSidebar"] { display: none !important; } .stMainBlockContainer { max-width: 500px; margin: 0 auto; padding-top: 5rem; }</style>""", unsafe_allow_html=True)
+        st.title("🔒 Login - AC Batista ERP")
+        usuario = st.text_input("Usuário", key="txt_usuario_final")
+        senha = st.text_input("Senha", type="password", key="txt_senha_final")
+        
+        if st.button("Acessar o Sistema"):
+            registro, erro = validar_usuario_sheets(usuario, senha)
+            if erro:
+                st.error(erro)
+            else:
+                container_login.empty()
+                st.session_state.logado = True
+
+                # Lê os dados reais vindos da linha correspondente do Google Sheets
+                st.session_state.usuario = str(registro.get('USUARIO', '')).strip()
+                filial_detectada = str(registro.get('FILIAL', '')).strip().upper()
+                st.session_state.filial_nome = filial_detectada
+
+                # Se for ADMINISTRATIVO, define como Admin. Caso contrário, assume o nome da filial (Nutricionista)
+                if filial_detectada == "ADMINISTRATIVO":
+                    st.session_state.nivel = "Admin"
+                else:
+                    st.session_state.nivel = filial_detectada
+
+                st.rerun()
+        st.stop()
+
+# =========================================================================
 if 'ngrok_url' in st.session_state and st.session_state['ngrok_url']:
     st.info(f"📱 LINK DO CELULAR PARA A NUTRICIONISTA: {st.session_state['ngrok_url']}")
 
-
-# --- ESTILIZAÇÃO CSS OFICIAL ---
+# --- ESTILIZAÇÃO CSS OFICIAL DO PAINEL INTERNO ---
 st.markdown("""
     <style>
     .stButton>button {
@@ -54,20 +171,6 @@ st.markdown("""
     .stButton>button:hover { background-color: #003366; color: white; }
     </style>
     """, unsafe_allow_html=True)
-
-# --- CONEXÃO COM GOOGLE SHEETS ---
-def conectar_sheets_nativo():
-    nomes_possiveis = ["chave.json", "chave.json.json", "google_secret.json", "chave"]
-    arquivo_encontrado = None
-    for nome in nomes_possiveis:
-        if os.path.exists(nome):
-            arquivo_encontrado = nome
-            break
-    if not arquivo_encontrado: return None
-    try:
-        client = gspread.service_account(filename=arquivo_encontrado)
-        return client.open("Formulário sem título (Respostas)")
-    except Exception: return None
 
 GOVERNANCA_FILE = "governanca_status.json"
 DEFAULT_GOVERNANCA = {
@@ -596,61 +699,29 @@ def interface_lancamento_proteina_filial():
     except Exception as e:
         st.error(f"Erro na interface de lançamento: {e}")
 
-if 'logado' not in st.session_state:
-    st.session_state.logado, st.session_state.usuario, st.session_state.nivel, st.session_state.filial_nome = False, None, None, None
-
 carregar_governanca()
 
 # Carrega a lista mestre mensal em memória (pode ser usada pelo módulo Mensal)
 PRODUTOS_MESTRE_MENSAL = carregar_produtos_mensal()
-try:
-    u_in = st.session_state.get('usuario_login', '')
-    s_in = st.session_state.get('senha_login', '')
+
+# Inicializa o cliente Google Sheets uma única vez antes do painel principal
+if client is None:
     client = conectar_sheets_nativo()
-    if client:
-                sheet = client.worksheet("BD_USUARIOS")
-                dados = sheet.get_all_records()
-                df = pd.DataFrame(dados)
-                
-                df.columns = [c.strip().upper() for c in df.columns]
-                val = df[df['USUARIO'].astype(str).str.strip() == u_in]
-                
-                if not val.empty:
-                    s_c = str(val['SENHA'].values[0]).strip()
-                    
-                    if str(s_in).strip() == s_c:
-                        st.session_state.logado = True
-                        st.session_state.usuario = str(val['USUARIO'].values[0]).strip()
-                        st.session_state.filial_nome = str(val['FILIAL'].values[0]).strip().upper()
-                        
-                        cargo = st.session_state.filial_nome
-                        st.session_state.nivel = "Fornecedor" if cargo == "FORNECEDOR" else ("Admin" if cargo == "ADMINISTRATIVO" else "Nutricionista")
-                        st.rerun()
-                    else:
-                        st.error("❌ Senha incorreta.")
-                else:
-                    st.error("❌ Usuário não localizado.")
-    else:
-                st.error("❌ Erro de conexão com o Google Sheets.")
-except Exception as e:
-            st.error(f"Erro ao acessar banco na nuvem: {e}")
-else:
 
-        st.sidebar.title("🏢 AC Batista ERP")
-        st.sidebar.write(f"👤 Usuário: **{st.session_state.usuario}**")
-        st.sidebar.write(f"🔐 Acesso: **{st.session_state.nivel}**")
-        if st.sidebar.button("🚪 Sair/Logoff"):
-            st.session_state.logado = False
-            st.rerun()
-        if st.session_state.nivel == "Admin":
-         mostrar_painel_diretor()
-st.sidebar.write("---")
-modulos_basicos = ["🛒 Compras & Suprimentos", "🥩 Auditoria Semanal (Proteínas)", "📋 Fichas Técnicas (Cardápio)"]
-if st.session_state.nivel == "Admin":
+if st.session_state.get('logado', False):
+    st.sidebar.write(f"👤 Usuário: **{st.session_state.get('usuario', 'Nenhum')}**")
+    st.sidebar.write(f"💼 Acesso: **{st.session_state.get('nivel', 'Comum')}**")
+    if st.sidebar.button("🚪 Sair/Logoff"):
+        st.session_state.logado = False
+        st.rerun()
+    st.sidebar.write("---")
+    modulos_basicos = ["🛒 Compras & Suprimentos", "🥩 Auditoria Semanal (Proteínas)", "📋 Fichas Técnicas (Cardápio)"]
+    if st.session_state.nivel == "Admin":
         modulos_basicos.append("📌 Módulo de Cotação & Consolidação")
-modulo_selecionado = st.sidebar.radio("Módulo:", modulos_basicos)
+        st.session_state.lista_fornecedores_rede = carregar_fornecedores_ativos()
+    modulo_selecionado = st.sidebar.radio("Módulo:", modulos_basicos)
 
-if modulo_selecionado == "🛒 Compras & Suprimentos":
+    if modulo_selecionado == "🛒 Compras & Suprimentos":
         st.title("🗃️ Gestão de Compras & Módulo Mensal")
         col1, col2 = st.columns(2)
         with col1:
@@ -663,9 +734,10 @@ if modulo_selecionado == "🛒 Compras & Suprimentos":
             if st.session_state.nivel != "Admin" and not st.session_state.libera_digitacao_semanal:
                 st.warning("A digitação semanal está temporariamente fechada pelo Diretor Jardel.")
             else:
-                if st.button("GERAR COMPRAS DE PROTEÍNA SEMANAL"):
-                    consolidar_proteina_semanal_geral()
-elif modulo_selecionado == "🥩 Auditoria Semanal (Proteínas)":
+                if st.session_state.get('nivel', 'Comum') == 'Admin':
+                    if st.button("GERAR COMPRAS DE PROTEÍNA SEMANAL"):
+                        consolidar_proteina_semanal_geral()
+    elif modulo_selecionado == "🥩 Auditoria Semanal (Proteínas)":
         st.title("🥩 Auditoria Semanal (Proteínas)")
         tab1, tab2 = st.tabs(["📝 Lançar Pedido", "📊 Consolidado"])
         
@@ -677,86 +749,101 @@ elif modulo_selecionado == "🥩 Auditoria Semanal (Proteínas)":
                 consolidar_proteina_semanal_geral()
             else:
                 consolidar_proteina_semanal_geral()
-elif modulo_selecionado == "� Módulo de Cotação & Consolidação":
+    elif modulo_selecionado == "📌 Módulo de Cotação & Consolidação":
         modulo_cotacao_consolidacao()
-elif modulo_selecionado == "�📋 Fichas Técnicas (Cardápio)":
+    elif modulo_selecionado == "📋 Fichas Técnicas (Cardápio)":
         st.title("🥗 Área de Nutrição - Fichas Técnicas")
 
-# --- ADICIONANDO A INTERFACE NOVA NO FINAL DO ARQUIVO COM TRAVA ---
-if "logado" in st.session_state and st.session_state.logado and st.session_state.usuario != "Jardel":
-    st.title("🥩 Pedido Semanal")
-st.subheader(f"Filial: {st.session_state.get('filial_nome', 'Não Identificada').title()}")    
-    # Abas por Categoria
-aba_proteinas, aba_hortifruti, aba_mercearia = st.tabs(["🥩 Proteínas", "🥬 Hortifrúti", "🧃 Mercearia"])
-    
-with aba_proteinas:
-        # 1. Identifica a filial da nutricionista logada (Ex: "BARBACENA", "DONA MARIA")
-        filial_usuario = st.session_state.get("filial_nome", "BARBACENA").upper().strip()
+    # --- ADICIONANDO A INTERFACE NOVA NO FINAL DO ARQUIVO COM TRAVA ---
+    if "logado" in st.session_state and st.session_state.logado and st.session_state.usuario != "Jardel":
+        st.title("🥩 Pedido Semanal")
+        st.subheader(f"Filial: {st.session_state.get('filial_nome', 'Não Identificada')}")
+        # Abas por Categoria
+        aba_proteinas, aba_hortifruti, aba_mercearia = st.tabs(["🥩 Proteínas", "🥬 Hortifrúti", "🧃 Mercearia"])
         
-        # 2. DICIONÁRIO DE VÍNCULOS: Aponta dinamicamente qual contrato ler
-        if filial_usuario in ["CENTRO", "TEJUCO", "MATOSINHOS", "COLONIA", "BARBACENA"]:
-            nome_aba_contrato = "CONTRATO_POPULAR_GERAL"
-        elif filial_usuario == "LEOPOLDINA":
-            nome_aba_contrato = "CONTRATO_LEOPOLDINA"
-        else:
-            nome_aba_contrato = "CONTRATO_DONA_MARIA"
-            
-        nome_aba_produtos = f"PROTEINA_{filial_usuario}"
-        
-        st.caption(f"📋 Contrato ativo: **{nome_aba_contrato}** | Catálogo: **{nome_aba_produtos}**")
-        
-        try:
-            client = conectar_sheets_nativo()
-            if client:
-                # --- LEITURA DO CONTRATO (LIMITES) ---
-                sheet_contrato = client.worksheet(nome_aba_contrato)
-                dados_contrato = sheet_contrato.get_all_records()
-                df_contrato = pd.DataFrame(dados_contrato)
-                df_contrato.columns = [c.strip().upper() for c in df_contrato.columns]
-                
-                # --- LEITURA DOS PRODUTOS DA FILIAL ---
-                sheet_produtos = client.worksheet(nome_aba_produtos)
-                dados_produtos = sheet_produtos.get_all_records()
-                df_produtos = pd.DataFrame(dados_produtos)
-                df_produtos.columns = [c.strip().upper() for c in df_produtos.columns]
-                
-                lista_itens = df_produtos["PRODUTO"].dropna().tolist()
-                lista_itens = [item for item in lista_itens if str(item).strip() != ""]
-                
-                # 3. MONTA OS CARTÕES E A TRAVA DE SEGURANÇA
-                for item in lista_itens:
-                    st.markdown(f'''
-                        <div style="background:#fff; padding:15px; border-radius:10px; 
-                        box-shadow:0 4px 6px rgba(0,0,0,0.1); margin-bottom:5px; margin-top:15px;">
-                            <span style="font-size:16px; font-weight:bold; color:#333;">🥩 {item}</span>
-                        </div>
-                    ''', unsafe_allow_html=True)
-                    
-                    # Captura a quantidade digitada pela nutricionista
-                    qtd_digitada = st.number_input("Quantidade:", min_value=0.0, step=1.0, key=f"qtd_{item}", label_visibility="collapsed")
-                    
-                    # Busca o Limite Ativo correspondente a este produto na tabela de contrato
-                    limite_ativo = 999999.0  # Limite padrão alto caso não ache o item
-                    if "DESCRIÇÃO" in df_contrato.columns and "LIMITE ATIVO" in df_contrato.columns:
-                        linha_item = df_contrato[df_contrato["DESCRIÇÃO"].astype(str).str.strip().upper() == str(item).strip().upper()]
-                        if not linha_item.empty:
-                            limite_ativo = float(linha_item["LIMITE ATIVO"].values[0])
-                    
-                    # SE ESTOURAR A COTA: Abre a caixa de justificativa obrigatória na hora!
-                    if qtd_digitada > limite_ativo:
-                        st.warning(f"⚠️ Cota estourada! Limite permitido: **{limite_ativo} kg**. Seu pedido: **{qtd_digitada} kg**.")
-                        st.text_area(f"Justificativa obrigatória para {item}:", key=f"just_{item}", placeholder="Explique o motivo do pedido acima da cota...")
-                        
+        with aba_proteinas:
+            if st.session_state.nivel == "Admin":
+                filiais_lista = ["TEJUCO", "CENTRO", "MATOSINHOS", "RM SABOR", "COLONIA", "BARRACENA", "LEOPOLDINA"]
+                filial_selecionada = st.selectbox("🏬 Selecione a Filial para Gerenciar/Cotar:", filiais_lista)
+                nome_aba_produtos = f"PROTEINA_{filial_selecionada}"
+                filial_usuario = filial_selecionada
             else:
-                st.error("❌ Não foi possível conectar ao Google Sheets.")
-                
-        except Exception as e:
-            st.error(f"⚠️ Erro ao carregar dados na nuvem: {e}")
+                filial_usuario = str(st.session_state.get("filial_nome") or "BARBACENA").upper().strip()
+                nome_aba_produtos = f"PROTEINA_{filial_usuario}"
 
-with aba_hortifruti:
-        st.markdown('<div style="background:#fff; padding:15px; border-radius:10px; box-shadow:0 4px 6px rgba(0,0,0,0.1); margin-bottom:15px;">', unsafe_allow_html=True)
-        st.number_input("Qtd:", min_value=0.0, step=1.0, key="tomate", label_visibility="collapsed")
-        
-st.write("---")
-if st.button("✔️ Salvar e Enviar Pedido", type="primary", use_container_width=True):
-        st.success("Pedido enviado com sucesso!")
+            # 2. DICIONÁRIO DE VÍNCULOS: Aponta dinamicamente qual contrato ler
+            if filial_usuario in ["CENTRO", "TEJUCO", "MATOSINHOS", "COLONIA", "BARBACENA"]:
+                nome_aba_contrato = "CONTRATO_POPULAR_GERAL"
+            elif filial_usuario == "LEOPOLDINA":
+                nome_aba_contrato = "CONTRATO_LEOPOLDINA"
+            else:
+                nome_aba_contrato = "CONTRATO_DONA_MARIA"
+                         
+            st.caption(f"📋 Contrato ativo: **{nome_aba_contrato}** | Catálogo: **{nome_aba_produtos}**")
+            
+            try:
+                client = conectar_sheets_nativo()
+                if client:
+                    # --- LEITURA DO CONTRATO (LIMITES) ---
+                    sheet_contrato = client.worksheet(nome_aba_contrato)
+                    dados_contrato = sheet_contrato.get_all_records()
+                    df_contrato = pd.DataFrame(dados_contrato)
+                    df_contrato.columns = [c.strip().upper() for c in df_contrato.columns]
+                    
+                    # --- LEITURA DOS PRODUTOS DA FILIAL ---
+                    sheet_produtos = client.worksheet(nome_aba_produtos)
+                    dados_produtos = sheet_produtos.get_all_records()
+                    df_produtos = pd.DataFrame(dados_produtos)
+                    df_produtos.columns = [c.strip().upper() for c in df_produtos.columns]
+                    
+                    lista_itens = df_produtos["PRODUTO"].dropna().tolist()
+                    lista_itens = [item for item in lista_itens if str(item).strip() != ""]
+                    
+                    # 3. MONTA OS CARTÕES E A TRAVA DE SEGURANÇA
+                    for item in lista_itens:
+                        st.markdown(f'''
+                            <div style="background:#fff; padding:15px; border-radius:10px; 
+                            box-shadow:0 4px 6px rgba(0,0,0,0.1); margin-bottom:5px; margin-top:15px;">
+                                <span style="font-size:16px; font-weight:bold; color:#333;">🥩 {item}</span>
+                            </div>
+                        ''', unsafe_allow_html=True)
+                        
+                        # 1. Campo de quantidade (Habilitado para Nutri, visível para Admin)
+                        qtd_digitada = st.number_input(f"Quantidade para {item}:", min_value=0.0, step=1.0, key=f"qtd_digitada_{item}")
+                        
+                        # 2. Se for Admin, exibe também os campos de preço e fornecedor com rótulos claros para não confundir
+                        if st.session_state.get('nivel', 'Comum') == 'Admin':
+                            col_preco, col_forn = st.columns(2)
+                            with col_preco:
+                                preco = st.number_input(f"Preço Unitário ({item}):", min_value=0.0, step=0.01, key=f"preco_{item}")
+                            with col_forn:
+                                fornecedor = st.text_input(f"Fornecedor Destino ({item}):", key=f"fornecedor_{item}")
+                        else:
+                            preco = None
+                            fornecedor = None
+                        
+                        # Busca o Limite Ativo correspondente a este produto na tabela de contrato
+                        limite_ativo = 999999.0  # Limite padrão alto caso não ache o item
+                        if "DESCRIÇÃO" in df_contrato.columns and "LIMITE ATIVO" in df_contrato.columns:
+                            linha_item = df_contrato[df_contrato["DESCRIÇÃO"].astype(str).str.strip().upper() == str(item).strip().upper()]
+                            if not linha_item.empty:
+                                limite_ativo = float(linha_item["LIMITE ATIVO"].values[0])
+                        
+                        # SE ESTOURAR A COTA: Abre a caixa de justificativa obrigatória na hora!
+                        if qtd_digitada > limite_ativo:
+                            st.warning(f"⚠️ Cota estourada! Limite permitido: **{limite_ativo} kg**. Seu pedido: **{qtd_digitada} kg**.")
+                            st.text_area(f"Justificativa obrigatória para {item}:", key=f"just_{item}", placeholder="Explique o motivo do pedido acima da cota...")
+                            
+                else:
+                    st.error("❌ Não foi possível conectar ao Google Sheets.")
+                    
+            except Exception as e:
+                st.error(f"⚠️ Erro ao carregar dados na nuvem: {e}")
+
+        with aba_hortifruti:
+            st.markdown('<div style="background:#fff; padding:15px; border-radius:10px; box-shadow:0 4px 6px rgba(0,0,0,0.1); margin-bottom:15px;">', unsafe_allow_html=True)
+            st.number_input("Qtd:", min_value=0.0, step=1.0, key="tomate", label_visibility="collapsed")
+            
+        st.write("---")
+        if st.button("✔️ Salvar e Enviar Pedido", type="primary", use_container_width=True):
+            st.success("Pedido enviado com sucesso!")

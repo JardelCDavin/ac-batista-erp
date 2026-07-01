@@ -6,6 +6,7 @@ import os
 import json
 from datetime import datetime
 import urllib.parse
+from google.oauth2.service_account import Credentials
 
 # Inicialização segura do estado da sessão
 if 'logado' not in st.session_state:
@@ -23,8 +24,11 @@ def inicializar_gspread():
     try:
         if "gcp_service_account" in st.secrets:
             credenciais_dict = dict(st.secrets["gcp_service_account"])
-            gc = gspread.service_account_from_dict(credenciais_dict)
-            return gc
+            if "private_key" in credenciais_dict:
+                credenciais_dict["private_key"] = credenciais_dict["private_key"].replace("\\n", "\n")
+            scopes = ["https://googleapis.com", "https://googleapis.com"]
+            creds = Credentials.from_service_account_info(credenciais_dict, scopes=scopes)
+            return gspread.authorize(creds)
         else:
             caminho_local = os.path.join(os.path.dirname(os.path.abspath(__file__)), "chave.json")
             gc = gspread.service_account(filename=caminho_local)

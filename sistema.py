@@ -21,19 +21,26 @@ if 'filial_nome' not in st.session_state:
 @st.cache_resource
 def inicializar_gspread():
     try:
-        # 1. Tenta ler primeiro dos Secrets do Streamlit Cloud (Nuvem)
-        if "gcp_service_account" in st.secrets:
-            if "json" in st.secrets["gcp_service_account"]:
-                credenciais_dict = json.loads(st.secrets["gcp_service_account"]["json"])
-            else:
-                credenciais_dict = dict(st.secrets["gcp_service_account"])
-            gc = gspread.service_account_from_dict(credenciais_dict)
-            return gc
-
-        # 2. Se não achar os secrets, não tenta mais o arquivo local em nuvem
-        else:
+        if "gcp_service_account" not in st.secrets:
             st.error("Credenciais do Google Sheets não encontradas em st.secrets. Verifique a configuração de secrets no Streamlit Cloud.")
             return None
+
+        credenciais = st.secrets["gcp_service_account"]
+        if isinstance(credenciais, str):
+            credenciais_dict = json.loads(credenciais)
+        elif isinstance(credenciais, dict):
+            if "json" in credenciais and isinstance(credenciais["json"], str):
+                credenciais_dict = json.loads(credenciais["json"])
+            else:
+                credenciais_dict = credenciais
+        else:
+            st.error("Formato inválido em st.secrets['gcp_service_account']. Use um dict ou JSON string.")
+            return None
+
+        return gspread.service_account_from_dict(credenciais_dict)
+    except json.JSONDecodeError as e:
+        st.error(f"Erro ao decodificar JSON dos secrets do Google Sheets: {e}")
+        return None
     except Exception as e:
         st.error(f"Erro crítico na conexão com o Google Sheets: {e}")
         return None

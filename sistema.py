@@ -29,10 +29,7 @@ def inicializar_gspread():
         if isinstance(credenciais, str):
             credenciais_dict = json.loads(credenciais)
         elif isinstance(credenciais, dict):
-            if "json" in credenciais and isinstance(credenciais["json"], str):
-                credenciais_dict = json.loads(credenciais["json"])
-            else:
-                credenciais_dict = credenciais
+            credenciais_dict = credenciais
         else:
             st.error("Formato inválido em st.secrets['gcp_service_account']. Use um dict ou JSON string.")
             return None

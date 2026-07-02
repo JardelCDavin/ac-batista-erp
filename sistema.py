@@ -72,7 +72,7 @@ def validar_usuario_sheets(usuario, senha):
         return None, "❌ Não foi possível conectar ao Google Sheets. Verifique o arquivo chave.json e a configuração da API."
 
     try:
-        sheet = client.open_by_url("https://google.com").worksheet("BD_USUARIOS")
+                sheet = client.open_by_url("https://google.com").worksheet("BD_USUARIOS")
     except Exception as e:
         return None, f"❌ Erro ao abrir a aba BD_USUARIOS: {e}"
 

@@ -69,13 +69,21 @@ def conectar_sheets_nativo():
 def validar_usuario_sheets(usuario_input, senha_input):
     """
     Valida as credenciais na aba BD_USUARIOS do Google Sheets.
-    Autenticação direta via st.secrets e leitura correta do Pandas.
+    Autenticação nativa utilizando o construtor correto do google-auth.
     """
     try:
         import streamlit as st
-        # Conexão direta usando os segredos do Streamlit Cloud
-        credentials = st.secrets["gcp_service_account"]
-        client = gspread.authorize(gspread.auth.service_account_from_dict(credentials))
+        from google.oauth2.service_account import Credentials
+        
+        # 1. Carrega os segredos do Streamlit Cloud
+        info_secrets = st.secrets["gcp_service_account"]
+        
+        # 2. Converte o dicionário bruto em um objeto de credenciais aceito pelo gspread
+        escopos = ["https://googleapis.com", "https://googleapis.com"]
+        credenciais_validas = Credentials.from_service_account_info(dict(info_secrets), scopes=escopos)
+        
+        # 3. Conecta de forma limpa e segura
+        client = gspread.authorize(credenciais_validas)
         
         sh = client.open("Portal AC Batista ERP")
         sheet = sh.worksheet("BD_USUARIOS")
@@ -84,8 +92,7 @@ def validar_usuario_sheets(usuario_input, senha_input):
         if not dados_brutos:
             return None, "❌ A tabela BD_USUARIOS está vazia."
             
-        # Cria o DataFrame mapeando a primeira linha como cabeçalho de forma correta
-        df = pd.DataFrame(dados_brutos[1:], columns=dados_brutos[0])
+        df = pd.DataFrame(dados_brutos[1:], columns=dados_brutos)
         df.columns = df.columns.str.strip().str.lower()
         df.columns = [c.replace('ú', 'u').replace('í', 'i').replace('é', 'e') for c in df.columns]
         

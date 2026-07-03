@@ -66,33 +66,48 @@ def conectar_sheets_nativo():
     return client
 
 
-def validar_usuario_sheets(usuario, senha):
-    client = conectar_sheets_nativo()
-    if not client:
-        return None, "❌ Não foi possível conectar ao Google Sheets. Verifique o arquivo chave.json e a configuração da API."
-
+def validar_usuario_sheets(usuario_input, senha_input):
+    """
+    Valida as credenciais na aba BD_USUARIOS do Google Sheets.
+    Suporta cabeçalhos em maiúsculas/minúsculas, com ou sem acentuação.
+    """
     try:
-                sheet = client.open_by_url("https://google.com").worksheet("BD_USUARIOS")
+        client = conectar_sheets_native()
+        if not client:
+            return None, "❌ Não foi possível conectar ao Google Sheets. Verifique a configuração da API."
+            
+        # IMPORTANTE: Mantido o comportamento de buscar o documento mestre
+        sh = client.open("Portal AC Batista ERP")
+        sheet = sh.worksheet("BD_USUARIOS")
+        dados_brutos = sheet.get_all_values()
+        
+        if not dados_brutos:
+            return None, "❌ A tabela BD_USUARIOS está vazia."
+            
+        df = pd.DataFrame(dados_brutos[1:], columns=dados_brutos[0])
+        df.columns = df.columns.str.strip().str.lower()
+        df.columns = [c.replace('ú', 'u').replace('í', 'i').replace('é', 'e') for c in df.columns]
+        
+        colunas_obrigatorias = ['usuario', 'senha', 'nivel']
+        if not all(col in df.columns for col in colunas_obrigatorias):
+            return None, f"❌ Colunas esperadas não encontradas. Identificado: {', '.join(df.columns)}"
+            
+        usuario_busca = str(usuario_input).strip().lower()
+        senha_busca = str(senha_input).strip()
+        
+        df['usuario_limpo'] = df['usuario'].astype(str).str.strip().str.lower()
+        df['senha_limpa'] = df['senha'].astype(str).str.strip()
+        
+        usuario_encontrado = df[(df['usuario_limpo'] == usuario_busca) & (df['senha_limpa'] == senha_busca)]
+        
+        if not usuario_encontrado.empty:
+            nivel = str(usuario_encontrado['nivel'].values[0]).strip().upper()
+            return True, nivel
+        else:
+            return None, "❌ Usuário ou senha incorretos."
+            
     except Exception as e:
-        return None, f"❌ Erro ao abrir a aba BD_USUARIOS: {e}"
-
-    try:
-        dados = sheet.get_all_records()
-    except Exception as e:
-        return None, f"❌ Erro ao ler dados de BD_USUARIOS: {e}"
-
-    df = pd.DataFrame(dados)
-    df.columns = [c.strip().upper() for c in df.columns]
-    u_in = str(usuario).strip().upper()
-    s_in = str(senha).strip()
-    val = df[df['USUARIO'].astype(str).str.strip().str.upper() == u_in]
-
-    if val.empty:
-        return None, "❌ Usuário não localizado."
-
-    senha_correta = str(val['SENHA'].values[0]).strip()
-    if s_in != senha_correta:
-        return None, "❌ Senha incorreta. Tente novamente."
+        return None, f"❌ Erro ao processar login: {str(e)}"
 
     return val.iloc[0], None
 

@@ -85,8 +85,8 @@ def validar_usuario_sheets(usuario_input, senha_input):
         # 3. Conecta de forma limpa e segura
         client = gspread.authorize(credenciais_validas)
         
-        sh = client.open("Portal AC Batista ERP")
-        sheet = sh.worksheet("BD_USUARIOS")
+                  sheet = client.open_by_url("https://docs.google.com/spreadsheets/d/1Qt0HIMchGH_956STdsOHZj5RzXO-cBrz7nyyiiyEB7o/edit").worksheet("BD_USUARIOS")
+
         dados_brutos = sheet.get_all_values()
         
         if not dados_brutos:

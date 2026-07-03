@@ -69,14 +69,14 @@ def conectar_sheets_nativo():
 def validar_usuario_sheets(usuario_input, senha_input):
     """
     Valida as credenciais na aba BD_USUARIOS do Google Sheets.
-    Suporta cabeçalhos em maiúsculas/minúsculas, com ou sem acentuação.
+    Autenticação direta via st.secrets e leitura correta do Pandas.
     """
     try:
-        client = conectar_sheets_native()
-        if not client:
-            return None, "❌ Não foi possível conectar ao Google Sheets. Verifique a configuração da API."
-            
-        # IMPORTANTE: Mantido o comportamento de buscar o documento mestre
+        import streamlit as st
+        # Conexão direta usando os segredos do Streamlit Cloud
+        credentials = st.secrets["gcp_service_account"]
+        client = gspread.authorize(gspread.auth.service_account_from_dict(credentials))
+        
         sh = client.open("Portal AC Batista ERP")
         sheet = sh.worksheet("BD_USUARIOS")
         dados_brutos = sheet.get_all_values()
@@ -84,6 +84,7 @@ def validar_usuario_sheets(usuario_input, senha_input):
         if not dados_brutos:
             return None, "❌ A tabela BD_USUARIOS está vazia."
             
+        # Cria o DataFrame mapeando a primeira linha como cabeçalho de forma correta
         df = pd.DataFrame(dados_brutos[1:], columns=dados_brutos[0])
         df.columns = df.columns.str.strip().str.lower()
         df.columns = [c.replace('ú', 'u').replace('í', 'i').replace('é', 'e') for c in df.columns]
@@ -108,8 +109,6 @@ def validar_usuario_sheets(usuario_input, senha_input):
             
     except Exception as e:
         return None, f"❌ Erro ao processar login: {str(e)}"
-
-    return val.iloc[0], None
 
 # =========================================================================
 # 🛑 TRAVA DE SEGURANÇA E TELA DE LOGIN ISOLADA

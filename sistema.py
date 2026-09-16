@@ -1,19 +1,23 @@
-import streamlit as st
-import streamlit.components.v1 as components
-import pandas as pd
-import gspread
-import os
 import json
-from datetime import datetime as dt_mod, date, timedelta, time as time_mod
+import os
+import streamlit as st
+
+# Cria o arquivo chave.json dinamicamente na nuvem usando os Secrets do Streamlit
+if 'gcp_service_account' in st.secrets:
+  with open('chave.json', 'w', encoding='utf-8') as f:
+    json.dump(dict(st.secrets['gcp_service_account']), f)
 import urllib.parse
+from datetime import date, datetime as dt_mod, time as time_mod, timedelta
 import time as time_lib
-from gspread_dataframe import set_with_dataframe
-from reportlab.lib.pagesizes import letter
-from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
-from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
-from reportlab.lib import colors
 import io
 import xml.etree.ElementTree as ET
+import gspread
+from gspread_dataframe import set_with_dataframe
+import pandas as pd
+from reportlab.lib import colors
+from reportlab.lib.pagesizes import letter
+from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
+from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
 
 # --- BLINDAGEM DE API: MEMÓRIA DE CURTO PRAZO ---
 @st.cache_data(ttl=120)

@@ -72,3 +72,4 @@ watchdog==6.0.0
 websockets==16.0
 xlsxwriter==3.2.9
 gspread-dataframe
+reportlab

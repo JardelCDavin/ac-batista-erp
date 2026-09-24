@@ -1,11 +1,6 @@
 import json
 import os
 import streamlit as st
-
-# Cria o arquivo chave.json dinamicamente na nuvem usando os Secrets do Streamlit
-if 'gcp_service_account' in st.secrets:
-  with open('chave.json', 'w', encoding='utf-8') as f:
-    json.dump(dict(st.secrets['gcp_service_account']), f)
 import urllib.parse
 from datetime import date, datetime as dt_mod, time as time_mod, timedelta
 import time as time_lib
@@ -18,6 +13,24 @@ from reportlab.lib import colors
 from reportlab.lib.pagesizes import letter
 from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
 from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
+
+# --- CONEXÃO INTELIGENTE COM O GOOGLE SHEETS (CORREÇÃO STREAMLIT CLOUD) ---
+@st.cache_resource
+def inicializar_gspread():
+    # 1. Se estiver rodando na nuvem (Streamlit Cloud), usa a memória!
+    if 'gcp_service_account' in st.secrets:
+        credenciais = dict(st.secrets['gcp_service_account'])
+        # Vacina contra erro de RSA: garante que as quebras de linha sejam lidas corretamente
+        if 'private_key' in credenciais:
+            credenciais['private_key'] = credenciais['private_key'].replace('\\n', '\n')
+        return gspread.service_account_from_dict(credenciais)
+    
+    # 2. Se estiver rodando no seu computador (VS Code), usa o arquivo físico local
+    caminho_local = os.path.join(os.path.dirname(os.path.abspath(__file__)), "chave.json")
+    if os.path.exists(caminho_local):
+        return gspread.service_account(filename=caminho_local)
+        
+    raise ValueError("Nenhuma credencial do Google encontrada. Verifique o Streamlit Secrets ou o arquivo chave.json.")
 
 # --- BLINDAGEM DE API: MEMÓRIA DE CURTO PRAZO ---
 @st.cache_data(ttl=120)
@@ -44,12 +57,7 @@ if 'libera_digitacao_semanal' not in st.session_state: st.session_state.libera_d
 if 'modulo_ativo' not in st.session_state: st.session_state.modulo_ativo = 'Lançamento'
 df_cot_reais = pd.DataFrame()
 
-# --- CONEXÃO INTELIGENTE COM O GOOGLE SHEETS & GARANTIA DE ABAS ---
-@st.cache_resource
-def inicializar_gspread():
-    caminho_local = os.path.join(os.path.dirname(os.path.abspath(__file__)), "chave.json")
-    return gspread.service_account(filename=caminho_local)
-
+# --- GARANTIA DE ABAS ---
 try:
     client = inicializar_gspread().open_by_url("https://docs.google.com/spreadsheets/d/1Qt0HIMchGH_956STdsOHZj5RzXO-cBrz7nyyiiyEB7o/edit?resourcekey=&gid=60610781#gid=60610781")
     
@@ -63,11 +71,17 @@ try:
     if "DE_PARA_FORNECEDORES" not in abas_existentes:
         ws_d = client.add_worksheet(title="DE_PARA_FORNECEDORES", rows="2000", cols="5")
         ws_d.append_row(["CODIGO_INTERNO", "PRODUTO_INTERNO", "CNPJ_FORNECEDOR", "NOME_FORNECEDOR", "CODIGO_ITEM_FORNECEDOR"])
+    if "CONFERENCIA_FISICA" not in abas_existentes:
+        ws_c = client.add_worksheet(title="CONFERENCIA_FISICA", rows="2000", cols="12")
+        ws_c.append_row(["DATA_HORA", "FILIAL", "NUMERO_NF", "FORNECEDOR", "PRODUTO", "QTD_XML", "QTD_REAL", "DIVERGENCIA", "LOTE", "VALIDADE", "TEMPERATURA", "CONFERENTE"])
 except gspread.exceptions.APIError as e:
     client = None
     if e.response.status_code == 429:
         st.error("⏳ Limite de acessos rápidos do Google atingido. Por favor, aguarde 1 minuto e recarregue a página.")
         st.stop()
+except Exception as global_e:
+    st.error(f"Erro ao conectar com o Google Sheets: {global_e}")
+    st.stop()
 
 def conectar_sheets_nativo():
     return client
@@ -82,37 +96,29 @@ def carregar_dados_planilha():
 
 @st.cache_data(ttl=300)
 def carregar_fornecedores_ativos():
-    """Apenas fornecedores ATIVOS = SIM (Para Cotação Oficial)"""
-    if not client:
-        return ["FORNECEDOR PADRÃO"]
+    if not client: return ["FORNECEDOR PADRÃO"]
     try:
         dados = buscar_dados_aba_cache("FORNECEDORES")
         if dados:
             ativos = [str(row.get('Fornecedor', row.get('FORNECEDOR', ''))).strip() for row in dados if str(row.get('ATIVO', '')).strip().upper() == 'SIM']
             return ativos if ativos else ["FORNECEDOR PADRÃO"]
         return ["FORNECEDOR PADRÃO"]
-    except Exception as e:
-        return ["FORNECEDOR PADRÃO"]
+    except Exception as e: return ["FORNECEDOR PADRÃO"]
 
 @st.cache_data(ttl=300)
 def carregar_todos_fornecedores_cadastrados():
-    """TODOS os fornecedores cadastrados, sem filtro de ativo (Para Pedido Manual)"""
-    if not client:
-        return ["FORNECEDOR PADRÃO"]
+    if not client: return ["FORNECEDOR PADRÃO"]
     try:
         dados = buscar_dados_aba_cache("FORNECEDORES")
         if dados:
             todos = [str(row.get('Fornecedor', row.get('FORNECEDOR', ''))).strip() for row in dados if str(row.get('Fornecedor', row.get('FORNECEDOR', ''))).strip()]
             return sorted(list(set(todos))) if todos else ["FORNECEDOR PADRÃO"]
         return ["FORNECEDOR PADRÃO"]
-    except Exception as e:
-        return ["FORNECEDOR PADRÃO"]
+    except Exception as e: return ["FORNECEDOR PADRÃO"]
 
 @st.cache_data(ttl=300)
 def carregar_catalogo_produtos_mapeamento():
-    """Lê a aba PRODUTOS considerando Código, Nome e Preço Base"""
-    if not client:
-        return {}, {}, [], {}
+    if not client: return {}, {}, [], {}
     try:
         dados = buscar_dados_aba_cache("PRODUTOS")
         cod_para_prod = {}
@@ -137,20 +143,16 @@ def carregar_catalogo_produtos_mapeamento():
                         precos_base_map[p_nome] = p_preco_float
                         
         return cod_para_prod, prod_para_cod, sorted(list(set(lista_nomes))), precos_base_map
-    except Exception:
-        return {}, {}, ["COXA SOLTEIRA PILÃO KG", "LINGUIÇA SUÍNA CHURRASCO", "SASSAMI KG"], {}
+    except Exception: return {}, {}, ["COXA SOLTEIRA PILÃO KG", "LINGUIÇA SUÍNA CHURRASCO", "SASSAMI KG"], {}
 
 @st.cache_data(ttl=60)
 def carregar_de_para_fornecedores():
-    """Carrega a memória de aprendizado do sistema para ler o XML BLINDADA CONTRA FALHAS DO SHEETS"""
     dados = buscar_dados_aba_cache("DE_PARA_FORNECEDORES")
     mapeamento = {}
     if dados:
         for row in dados:
             cnpj = str(row.get("CNPJ_FORNECEDOR", "")).strip().replace(".", "").replace("/", "").replace("-", "").replace("'", "")
-            if cnpj.isdigit():
-                cnpj = cnpj.zfill(14)
-                
+            if cnpj.isdigit(): cnpj = cnpj.zfill(14)
             cod_forn = str(row.get("CODIGO_ITEM_FORNECEDOR", "")).strip().replace("'", "")
             cod_interno = str(row.get("CODIGO_INTERNO", "")).strip().replace("'", "")
             nome_interno = str(row.get("PRODUTO_INTERNO", "")).strip()
@@ -159,44 +161,6 @@ def carregar_de_para_fornecedores():
                 chave = f"{cnpj}_{cod_forn}"
                 mapeamento[chave] = {"CODIGO_INTERNO": cod_interno, "PRODUTO_INTERNO": nome_interno}
     return mapeamento
-
-@st.cache_data(ttl=300)
-def carregar_tabela_precos_historica():
-    precos_map = {}
-    try:
-        dados_hist = buscar_dados_aba_cache("HISTORICO_PEDIDOS")
-        if dados_hist:
-            for h in dados_hist:
-                prod = str(h.get("PRODUTO", "")).strip().upper()
-                qtd = float(str(h.get("QUANTIDADE", 0)).replace(',','.')) if h.get("QUANTIDADE") else 0.0
-                val = float(str(h.get("VALOR_TOTAL", 0)).replace(',','.')) if h.get("VALOR_TOTAL") else 0.0
-                if prod and qtd > 0 and val > 0:
-                    precos_map[prod] = round(val / qtd, 2)
-        
-        dados_cot = buscar_dados_aba_cache("BD_COTACAO")
-        if dados_cot:
-            for c in dados_cot:
-                prod = str(c.get("PRODUTO", "")).strip().upper()
-                p_eq = c.get("PRECO_KG_EQUIV", 0.0)
-                if prod and p_eq > 0:
-                    precos_map[prod] = float(p_eq)
-    except:
-        pass
-    return precos_map
-
-@st.cache_data(ttl=300)
-def carregar_prazos_comerciais_sheets():
-    if not client:
-        return ["7 Dias", "14 Dias", "30 Dias"]
-    try:
-        dados = buscar_dados_aba_cache("PRAZOS_PAGAMENTOS")
-        if not dados:
-            return ["7 Dias", "14 Dias", "30 Dias"]
-            
-        lista_prazos = [str(linha.get("PRAZOS", "")).strip() for linha in dados if linha.get("PRAZOS")]
-        return lista_prazos if lista_prazos else ["7 Dias", "14 Dias", "30 Dias"]
-    except Exception:
-        return ["7 Dias", "7/14 Dias", "7/14/21 Dias", "7/14/21/28 Dias", "14 Dias", "30 Dias", "45 Dias", "60 Dias"]
 
 @st.cache_data(ttl=300)
 def carregar_dados_filiais_dict():
@@ -229,41 +193,23 @@ def carregar_dados_filiais_dict():
             cnpj, ie, endereco, cep, email = "", "", "", "", ""
             for linha in linhas:
                 l_up = linha.upper()
-                if "CNPJ:" in l_up:
-                    cnpj = linha.split(":")[-1].strip()
-                elif "ESTADUAL:" in l_up or "INS. ESTADUAL:" in l_up:
-                    ie = linha.split(":")[-1].strip()
-                elif "CEP:" in l_up:
-                    cep = linha.split(":")[-1].strip()
-                elif "E-MAIL:" in l_up or "EMAIL:" in l_up:
-                    email = linha.split(":")[-1].strip()
+                if "CNPJ:" in l_up: cnpj = linha.split(":")[-1].strip()
+                elif "ESTADUAL:" in l_up or "INS. ESTADUAL:" in l_up: ie = linha.split(":")[-1].strip()
+                elif "CEP:" in l_up: cep = linha.split(":")[-1].strip()
+                elif "E-MAIL:" in l_up or "EMAIL:" in l_up: email = linha.split(":")[-1].strip()
                 elif not any(x in l_up for x in ["CNPJ:", "ESTADUAL:", "CEP:", "E-MAIL:", "EMAIL:"]) and linha != razao:
-                    if not endereco:
-                        endereco = linha
-                    else:
-                        endereco += " - " + linha
+                    if not endereco: endereco = linha
+                    else: endereco += " - " + linha
                         
             filial_key = nome_filial.upper()
             filiais_map[filial_key] = {
-                "RAZAO": razao,
-                "CNPJ": cnpj if cnpj else "06.121.429/0008-90",
-                "IE": ie if ie else "625274795.07.43",
-                "ENDERECO": endereco if endereco else "SÃO JOÃO DEL REI/MG",
-                "CEP": cep if cep else "36300-168",
-                "EMAIL": email if email else "comprasacbatista@gmail.com"
+                "RAZAO": razao, "CNPJ": cnpj if cnpj else "06.121.429/0008-90",
+                "IE": ie if ie else "625274795.07.43", "ENDERECO": endereco if endereco else "SÃO JOÃO DEL REI/MG",
+                "CEP": cep if cep else "36300-168", "EMAIL": email if email else "comprasacbatista@gmail.com"
             }
     return filiais_map
 
 # --- CONFIGURAÇÕES E CONSTANTES GERAIS ---
-PRATOS_CARDAPIO_OFICIAL = ["Arroz Branco", "Feijão Carioca/Inteiro/Batido", "Filé de Frango Acebolado", "Carne Moída ao Molho", "Feijoada", "Frango Assado", "Linguiça Assada", "Pernil Assado", "Macarrão Alho e Óleo", "Angu/Polenta", "Farofa Colorida/Cenoura"]
-UNIDADES_PRODUTOS_MENSAL = {
-    "AÇÚCAR CRISTAL (FARDO 6X5KG)": "Fardo", "ARROZ PARBOILIZED (FARDO 6X5KG)": "Fardo", "ARROZ INTEGRAL": "KG", "ADOÇANTE LÍQUIDO": "UNID", "ACHOCOLATADO EM PÓ": "KG",
-    "CAFÉ (FARDO 10X500GR)": "Fardo", "CANJICA BRANCA": "KG", "CREME DE LEITE / CREME CULINÁRIO": "UNID", "ERVILHA EM CONSERVA (LATA 1,7KG)": "Lata", "EXTRATO DE TOMATE (CAIXA 6X1,7KG)": "Caixa",
-    "FARINHA DE MANDIOCA": "KG", "FARINHA DE MILHO": "KG", "FARINHA DE TRIGO": "KG", "FEIJÃO CARIOCA": "KG", "FEIJÃO PRETO": "KG", "FEIJÃO VERMELHO": "KG", "FUBÁ MIMOSO": "KG",
-    "LEITE INTEGRAL (CAIXA 12/1LT)": "Caixa", "LEITE EM PÓ": "KG", "MACARRÃO ESPAGUETE COM OVOS": "KG", "MACARRÃO PARAFUSO COM OVOS": "KG", "MACARRÃO PADRE NOSSO (SOPA)": "KG", "MAIONESE (BALDE)": "Balde",
-    "MARGARINA (BALDE 14,5KG)": "Balde", "MILHO DE PIPOCA": "KG", "MILHO VERDE EM CONSERVA (LATA 1,7KG)": "Lata", "MOLHO DE ALHO": "UNID", "MOLHO INGLÊS": "UNID", "MOLHO DE TOMATE (SACHET)": "UNID", "MOLHO SHOYU": "UNID",
-    "ÓLEO DE SOJA (CAIXA 20/900ML)": "Caixa", "ÓLEO COMPOSTO": "UNID", "SAL REFINADO (FARDO 30/1KG)": "Fardo", "SAL DE PARRILLA": "KG", "TEMPERO PRONTO (ALHO E SAL)": "UNID", "VINAGRE DE ÁLCOOL": "UNID"
-}
 MOCK_FILIAIS = ["TEJUCO", "CENTRO", "MATOSINHOS", "RM SABOR", "COLONIA", "BARBACENA", "LEOPOLDINA"]
 
 @st.cache_data(ttl=600)
@@ -273,46 +219,24 @@ def carregar_proteinas_semanal():
         if os.path.exists(arquivo):
             df = pd.read_excel(arquivo)
             cols = [c for c in df.columns if str(c).strip().upper() == 'PRODUTOS']
-            if not cols:
-                cols = [c for c in df.columns if 'PROD' in str(c).upper()]
-            if cols:
-                return df[cols[0]].dropna().astype(str).str.strip().tolist()
-    except Exception:
-        pass
+            if not cols: cols = [c for c in df.columns if 'PROD' in str(c).upper()]
+            if cols: return df[cols[0]].dropna().astype(str).str.strip().tolist()
+    except Exception: pass
     return []
 
-@st.cache_data(ttl=600)
-def carregar_produtos_mensal():
-    arquivo = "MENSAL_MERCEARIA_EMBALAGENS_LIMPEZA.xlsx"
-    try:
-        if os.path.exists(arquivo):
-            df = pd.read_excel(arquivo)
-            cols = [c for c in df.columns if str(c).strip().upper() == 'PRODUTOS']
-            if not cols:
-                cols = [c for c in df.columns if 'PROD' in str(c).upper()]
-            if cols:
-                return df[cols[0]].dropna().astype(str).str.strip().tolist()
-    except Exception:
-        pass
-    return []
-
-# --- CONFIGURAÇÃO DA PÁGINA (LAYOUT CONGELADO) ---
+# --- CONFIGURAÇÃO DA PÁGINA ---
 st.set_page_config(page_title="Portal AC Batista", layout="wide")
 
 def validar_usuario_sheets(usuario, senha):
-    if not client:
-        return None, "❌ Não foi possível conectar ao Google Sheets."
-    
+    if not client: return None, "❌ Não foi possível conectar ao Google Sheets."
     u_in = str(usuario).strip().upper()
     s_in = str(senha).strip()
-
     try:
         dados = buscar_dados_aba_cache("BD_USUARIOS")
         if dados:
             for linha in dados:
                 user_tabela = str(linha.get('USUARIO', '')).strip().upper()
                 senha_tabela = str(linha.get('SENHA', '')).strip()
-                
                 if user_tabela == u_in:
                     if senha_tabela == s_in:
                         return {
@@ -320,12 +244,9 @@ def validar_usuario_sheets(usuario, senha):
                             'FILIAL': str(linha.get('FILIAL', '')).strip().upper(),
                             'NIVEL': str(linha.get('NIVEL', '')).strip().upper() 
                         }, None
-                    else:
-                        return None, "❌ Senha incorreta. Tente novamente."
-    except Exception as e:
-        return None, f"❌ Erro crítico ao conectar à base de dados: {e}"
-
-    return None, "❌ Usuário ou Fornecedor não localizado no sistema."
+                    else: return None, "❌ Senha incorreta. Tente novamente."
+    except Exception as e: return None, f"❌ Erro crítico ao conectar à base de dados: {e}"
+    return None, "❌ Usuário não localizado."
 
 # =========================================================================
 # 🛑 TELA DE LOGIN ISOLADA
@@ -341,12 +262,10 @@ if not st.session_state.get('logado', False):
 
         if st.button("Acessar o Sistema"):
             registro, erro = validar_usuario_sheets(usuario, senha)
-            if erro:
-                st.error(erro)
+            if erro: st.error(erro)
             else:
                 container_login.empty()
                 st.session_state.logado = True
-                
                 st.session_state.usuario = str(registro.get('USUARIO', '')).strip()
                 nome_empresa = str(registro.get('FILIAL', '')).strip().upper()
                 nivel_detectado = str(registro.get('NIVEL', '')).strip().upper()
@@ -360,51 +279,13 @@ if not st.session_state.get('logado', False):
                 else:
                     st.session_state.nivel = "Nutricionista"
                     st.session_state.filial_nome = nome_empresa
-
                 st.cache_data.clear()
                 st.rerun()
 
-# --- ESTILIZAÇÃO CSS OFICIAL DO PAINEL INTERNO ---
-st.markdown("""
-    <style>
-    .stButton>button {
-        background-color: #004A99;
-        color: white;
-        width: 100%;
-        border-radius: 5px;
-        height: 3em;
-        font-weight: bold;
-    }
-    .stButton>button:hover { background-color: #003366; color: white; }
-    </style>
-    """, unsafe_allow_html=True)
+st.markdown("""<style>.stButton>button { background-color: #004A99; color: white; width: 100%; border-radius: 5px; height: 3em; font-weight: bold; } .stButton>button:hover { background-color: #003366; color: white; }</style>""", unsafe_allow_html=True)
 
 GOVERNANCA_FILE = "governanca_status.json"
-DEFAULT_GOVERNANCA = {
-    "libera_digitacao_semanal": False,
-    "libera_digitacao_mensal": False
-}
-
-def carregar_governanca():
-    if 'governanca' in st.session_state:
-        return st.session_state.governanca
-
-    governanca = DEFAULT_GOVERNANCA.copy()
-    if os.path.exists(GOVERNANCA_FILE):
-        try:
-            with open(GOVERNANCA_FILE, 'r', encoding='utf-8') as f:
-                arquivo = json.load(f)
-                governanca.update({
-                    'libera_digitacao_semanal': bool(arquivo.get('libera_digitacao_semanal', arquivo.get('libera_cotacao_semanal', governanca['libera_digitacao_semanal']))),
-                    'libera_digitacao_mensal': bool(arquivo.get('libera_digitacao_mensal', arquivo.get('libera_cotacao_mensal', governanca['libera_digitacao_mensal'])))
-                })
-        except Exception:
-            pass
-
-    st.session_state.governanca = governanca
-    st.session_state.libera_digitacao_semanal = governanca['libera_digitacao_semanal']
-    st.session_state.libera_digitacao_mensal = governanca['libera_digitacao_mensal']
-    return governanca
+DEFAULT_GOVERNANCA = {"libera_digitacao_semanal": False, "libera_digitacao_mensal": False}
 
 def salvar_governanca():
     governanca = {
@@ -413,10 +294,8 @@ def salvar_governanca():
     }
     st.session_state.governanca = governanca
     try:
-        with open(GOVERNANCA_FILE, 'w', encoding='utf-8') as f:
-            json.dump(governanca, f, indent=4, ensure_ascii=False)
-    except Exception:
-        pass
+        with open(GOVERNANCA_FILE, 'w', encoding='utf-8') as f: json.dump(governanca, f, indent=4, ensure_ascii=False)
+    except Exception: pass
 
 def encurtar_nome_fornecedor(nome_completo):
     n = str(nome_completo).strip().upper()
@@ -427,6 +306,17 @@ def encurtar_nome_fornecedor(nome_completo):
     elif "FRIGO" in n: return "Frigo"
     partes = n.split()
     return partes[0].title() if partes else "Fornecedor"
+
+def tratar_virgula(val):
+    try:
+        if isinstance(val, (int, float)): return float(val)
+        v_str = str(val).strip()
+        if "," in v_str and "." in v_str:
+            if v_str.rfind(",") > v_str.rfind("."): v_str = v_str.replace(".", "").replace(",", ".")
+            else: v_str = v_str.replace(",", "")
+        elif "," in v_str and "." not in v_str: v_str = v_str.replace(",", ".")
+        return float(v_str)
+    except: return 0.0
 
 # --- GERADOR DE PDF PROFISSIONAL (REPORTLAB) ---
 def gerar_pdf_pedido(num_pedido, filial_nome, dados_filial, forn_alvo, telefone_forn, prazo_pgto, df_itens, data_entrega):
@@ -508,52 +398,10 @@ def gerar_pdf_pedido(num_pedido, filial_nome, dados_filial, forn_alvo, telefone_
     buffer.seek(0)
     return buffer.getvalue()
 
+
 # =========================================================================
 # FUNÇÕES CORE (COMPRAS, SUPRIMENTOS E COTAÇÃO E ENTRADA XML)
 # =========================================================================
-def consolidar_mensal():
-    try:
-        planilha = conectar_sheets_nativo()
-        if not planilha: return
-        filiais_alvo = ['CENTRO', 'TEJUCO', 'COLONIA', 'BARBACENA', 'LEOPOLDINA', 'MATOSINHOS', 'SABOR']
-        totais_produtos = {}
-        for nome_aba_real in [w.title for w in planilha.worksheets()]:
-            if 'MENSAL' in nome_aba_real.upper() and any(f in nome_aba_real.upper() for f in filiais_alvo):
-                try:
-                    df_aba = pd.DataFrame(buscar_dados_aba_cache(nome_aba_real))
-                    if df_aba.empty: continue
-                    df_aba.columns = [str(c).strip().upper() for c in df_aba.columns]
-                    col_prod_real = next((c for c in df_aba.columns if 'PROD' in c or 'ITEM' in c or 'NOME' in c), df_aba.columns[0])
-                    col_qtd_real = next((c for c in df_aba.columns if 'QTD' in c or 'QUANT' in c), df_aba.columns[1] if len(df_aba.columns) > 1 else df_aba.columns[0])
-                    for _, linha in df_aba.iterrows():
-                        produto = str(linha[col_prod_real]).strip()
-                        if produto == "" or produto.upper().startswith("1.") or produto.upper().startswith("2."): continue
-                        qtd = pd.to_numeric(linha[col_qtd_real], errors='coerce')
-                        qtd = qtd if not pd.isna(qtd) else 0
-                        if qtd > 0: totais_produtos[produto.upper()] = totais_produtos.get(produto.upper(), 0) + qtd
-                except: continue
-        linhas_finais = [[p.title(), UNIDADES_PRODUTOS_MENSAL.get(p, "UN/KG"), q] for p, q in totais_produtos.items()]
-        if linhas_finais:
-            df_final = pd.DataFrame(linhas_finais, columns=['Item', 'Unidade', 'Quantidade Total'])
-            for aba_nome in ['MENSAL_MODELO', 'COTACAO']:
-                try:
-                    w = planilha.worksheet(aba_nome); w.clear()
-                    w.update(range='A1', values=[df_final.columns.values.tolist()] + df_final.values.tolist())
-                except: pass
-            st.success("✅ Módulo Mensal Consolidado!")
-    except Exception as e: st.error(f"Erro: {e}")
-
-def tratar_virgula(val):
-    try:
-        if isinstance(val, (int, float)): return float(val)
-        v_str = str(val).strip()
-        if "," in v_str and "." in v_str:
-            if v_str.rfind(",") > v_str.rfind("."): v_str = v_str.replace(".", "").replace(",", ".")
-            else: v_str = v_str.replace(",", "")
-        elif "," in v_str and "." not in v_str: v_str = v_str.replace(",", ".")
-        return float(v_str)
-    except: return 0.0
-
 def consolidar_proteina_semanal_geral(restaurante_filtro="Todos"):
     planilha = conectar_sheets_nativo()
     if not planilha: return
@@ -596,6 +444,7 @@ def consolidar_proteina_semanal_geral(restaurante_filtro="Todos"):
             st.success("✅ Salvo com sucesso!")
             st.cache_data.clear(); time_lib.sleep(1); st.rerun()
         except Exception as e: st.error(f"Erro: {e}")
+
 
 def modulo_cotacao_consolidacao(): 
     st.title("📊 Cotação & Consolidação") 
@@ -1745,6 +1594,154 @@ def modulo_entrada_xml():
         except Exception as e: st.error(f"Erro no XML: {e}")
 
 # =========================================================================
+# MÓDULO NOVO: ALMOXARIFADO / PORTARIA (RECEBIMENTO FÍSICO)
+# =========================================================================
+def modulo_recebimento_fisico():
+    st.title("📦 Recebimento Físico (Portaria / Almoxarifado)")
+    st.info("Tela cega para conferência de mercadorias. A temperatura só será exigida automaticamente para produtos perecíveis (carnes, laticínios, congelados).")
+
+    nivel_usuario = st.session_state.get('nivel', 'Comum')
+    filial_do_login = st.session_state.get('filial_nome', 'TEJUCO')
+
+    if nivel_usuario == "Admin":
+        filial_selected = st.selectbox("🏢 Selecione a Filial para Recebimento:", MOCK_FILIAIS, index=MOCK_FILIAIS.index(filial_do_login) if filial_do_login in MOCK_FILIAIS else 0)
+    else:
+        filial_selected = filial_do_login
+        st.info(f"📍 **Filial Ativa:** {filial_selected}")
+
+    dados_abertos = buscar_dados_aba_cache("PEDIDOS_ABERTOS")
+    if not dados_abertos:
+        st.success("Nenhum pedido em aberto ou nota aguardando conferência no sistema.")
+        return
+
+    df_abertos = pd.DataFrame(dados_abertos)
+    df_abertos.columns = [str(c).strip().upper() for c in df_abertos.columns]
+
+    # Filtra pedidos que tem a NF preenchida (RECEBIDO via XML) e que pertencem à filial logada, descartando os já CONFERIDOS fisicamente
+    df_receber = df_abertos[
+        (df_abertos["FILIAL"].astype(str).str.strip().str.upper() == str(filial_selected).upper()) &
+        (df_abertos["STATUS"].astype(str).str.upper().str.contains("RECEBIDO", na=False)) &
+        (~df_abertos["STATUS"].astype(str).str.upper().str.contains("CONFERIDO", na=False))
+    ].copy()
+
+    if df_receber.empty:
+        st.success("🎉 Nenhuma mercadoria ou Nota Fiscal pendente de conferência física para esta filial no momento.")
+        return
+
+    # Agrupar por NF para o conferente selecionar qual caminhão encostou
+    if "NUMERO_NF" in df_receber.columns:
+        nfs_disponiveis = [str(nf) for nf in df_receber["NUMERO_NF"].dropna().unique().tolist() if str(nf).strip()]
+    else:
+        nfs_disponiveis = []
+
+    if not nfs_disponiveis:
+        st.info("As notas faturadas ainda não tiveram seus números vinculados pelo faturamento central.")
+        return
+
+    nf_selecionada = st.selectbox("🚛 Selecione a Nota Fiscal / Carga que está recebendo:", nfs_disponiveis)
+
+    if nf_selecionada:
+        df_itens_nf = df_receber[df_receber["NUMERO_NF"].astype(str) == str(nf_selecionada)].copy()
+        fornecedor_nf = df_itens_nf.iloc[0]["FORNECEDOR"] if "FORNECEDOR" in df_itens_nf.columns else "Desconhecido"
+
+        st.markdown(f"### 📋 Conferência da Carga - NF: **{nf_selecionada}** ({fornecedor_nf})")
+
+        # DETECTOR DE PERECÍVEIS (INTELIGÊNCIA PARA TEMPERATURA)
+        def exige_temperatura(nome_produto):
+            palavras_chave = ['CARNE', 'FRANGO', 'SUÍNO', 'PEIXE', 'SALSICHA', 'LINGUIÇA', 'QUEIJO', 'PRESUNTO', 'CONGELAD', 'RESFRIAD', 'POLPA', 'IOGURTE', 'MANTEIGA', 'MISTURA LÁCTEA', 'REQUEIJÃO', 'SASSAMI', 'COXA', 'BIFE', 'MOÍDA']
+            return any(p in str(nome_produto).upper() for p in palavras_chave)
+
+        lista_conferencia = []
+        for _, row in df_itens_nf.iterrows():
+            produto = str(row.get("PRODUTO", ""))
+            qtd_xml = float(row.get("QUANTIDADE", 0.0))
+            precisa_temp = exige_temperatura(produto)
+
+            lista_conferencia.append({
+                "Produto": produto,
+                "Qtd Esperada (NF)": qtd_xml,
+                "Qtd Real que Chegou": 0.0,
+                "Lote": "",
+                "Validade (DD/MM/AAAA)": "",
+                "Temperatura ºC": "0.0" if precisa_temp else "Não se aplica"
+            })
+
+        df_conf = pd.DataFrame(lista_conferencia)
+
+        config_colunas = {
+            "Produto": st.column_config.TextColumn("Produto", disabled=True),
+            "Qtd Esperada (NF)": st.column_config.NumberColumn("Qtd NF", disabled=True),
+            "Qtd Real que Chegou": st.column_config.NumberColumn("Qtd Recebida Físico", min_value=0.0, step=0.1, required=True),
+            "Lote": st.column_config.TextColumn("Lote", required=False),
+            "Validade (DD/MM/AAAA)": st.column_config.TextColumn("Validade", required=False),
+            "Temperatura ºC": st.column_config.TextColumn("Temp. ºC", required=False) # TextColumn permite manter o aviso "Não se aplica"
+        }
+
+        df_editado = st.data_editor(
+            df_conf,
+            column_config=config_colunas,
+            hide_index=True,
+            use_container_width=True,
+            key=f"editor_recebimento_{nf_selecionada}"
+        )
+
+        st.write("")
+        if st.button("✅ Salvar Conferência e Fechar Recebimento", type="primary"):
+            with st.spinner("Registrando conferência no sistema..."):
+                try:
+                    ws_conf = client.worksheet("CONFERENCIA_FISICA")
+                    ts_agora = dt_mod.now().strftime('%d/%m/%Y %H:%M:%S')
+                    conferente = st.session_state.get('usuario', 'Desconhecido')
+
+                    divergencias_encontradas = []
+
+                    for _, row_ed in df_editado.iterrows():
+                        prod = row_ed["Produto"]
+                        qtd_xml = float(row_ed["Qtd Esperada (NF)"])
+                        qtd_real = float(row_ed["Qtd Real que Chegou"])
+                        lote = str(row_ed["Lote"])
+                        validade = str(row_ed["Validade (DD/MM/AAAA)"])
+                        temp = str(row_ed["Temperatura ºC"])
+
+                        divergencia = qtd_real - qtd_xml
+                        status_div = "OK" if divergencia == 0 else f"FALTA {abs(divergencia)}" if divergencia < 0 else f"SOBRA {divergencia}"
+
+                        if divergencia != 0:
+                            divergencias_encontradas.append((prod, qtd_xml, qtd_real, status_div))
+
+                        ws_conf.append_row([
+                            ts_agora, filial_selected, str(nf_selecionada), fornecedor_nf,
+                            prod, qtd_xml, qtd_real, status_div, lote, validade, temp, conferente
+                        ])
+
+                    # 2. Atualizar status na PEDIDOS_ABERTOS para CONFERIDO
+                    ws_ab = client.worksheet("PEDIDOS_ABERTOS")
+                    grid_ab = ws_ab.get_all_values()
+                    cab_ab = [str(c).strip().upper() for c in grid_ab[0]] if grid_ab else []
+                    idx_nf_ab = cab_ab.index("NUMERO_NF") if "NUMERO_NF" in cab_ab else 9
+                    idx_status_ab = cab_ab.index("STATUS") if "STATUS" in cab_ab else 7
+
+                    for i_ab, row_ab in enumerate(grid_ab):
+                        if i_ab > 0 and len(row_ab) > max(idx_nf_ab, idx_status_ab):
+                            if str(row_ab[idx_nf_ab]).strip().replace("'","") == str(nf_selecionada).strip():
+                                ws_ab.update_cell(i_ab + 1, idx_status_ab + 1, f"CONFERIDO (Físico: {ts_agora[:10]})")
+
+                    st.success("✅ Conferência registrada com sucesso!")
+
+                    if divergencias_encontradas:
+                        st.warning("⚠️ Atenção! Foram detectadas divergências entre a Nota Fiscal e a Carga Física:")
+                        for div in divergencias_encontradas:
+                            st.write(f"- **{div[0]}**: NF dizia {div[1]} | Chegou {div[2]} -> **{div[3]}**")
+                        st.info("O Setor de Compras será alertado para tratar com o fornecedor.")
+
+                    st.cache_data.clear()
+                    time_lib.sleep(3)
+                    st.rerun()
+
+                except Exception as e:
+                    st.error(f"Erro ao salvar conferência: {e}")
+
+# =========================================================================
 # FLUXO PRINCIPAL DE NAVEGAÇÃO E EXECUÇÃO
 # =========================================================================
 if client is None: client = conectar_sheets_nativo()
@@ -1758,15 +1755,16 @@ st.sidebar.write("---")
 
 nivel_atual = st.session_state.get('nivel', 'Comum')
 if nivel_atual == 'Admin':
-    opcoes_menu = ["🔍 Conferência e Consolidação", "🥗 Lançamento de Pedidos", "📊 Cotação & Consolidação", "🍳 Fichas Técnicas (Cardápio)", "💼 Compras & Suprimentos", "📥 Entrada de NF-e (XML)"]
+    opcoes_menu = ["🔍 Conferência e Consolidação", "🥗 Lançamento de Pedidos", "📊 Cotação & Consolidação", "🍳 Fichas Técnicas (Cardápio)", "💼 Compras & Suprimentos", "📥 Entrada de NF-e (XML)", "📦 Almoxarifado / Portaria"]
 elif nivel_atual == 'Fornecedor':
     opcoes_menu = ["🤝 Portal de Cotação"]
 else:
-    opcoes_menu = ["🥗 Lançamento de Pedidos"]
+    opcoes_menu = ["🥗 Lançamento de Pedidos", "📦 Almoxarifado / Portaria"]
 
 modulo_selecionado = st.sidebar.radio("Navegação do Sistema:", opcoes_menu)
 
 if modulo_selecionado == "📥 Entrada de NF-e (XML)": modulo_entrada_xml()
+elif modulo_selecionado == "📦 Almoxarifado / Portaria": modulo_recebimento_fisico()
 elif modulo_selecionado == "🔍 Conferência e Consolidação" or "Conferência" in str(modulo_selecionado): 
     st.title("🔍 Conferência e Consolidação de Pedidos")
     with st.container(border=True):
@@ -1778,7 +1776,7 @@ elif modulo_selecionado == "🔍 Conferência e Consolidação" or "Conferência
             salvar_governanca()
             st.rerun()
             
-    restaurante_filtrado = st.selectbox("Filtrar por Restaurante:", ["Todos", "TEJUCO", "CENTRO", "MATOSINHOS", "RM SABOR", "COLONIA", "BARBACENA", "LEOPOLDINA"]) 
+    restaurante_filtrado = st.selectbox("Filtrar por Restaurante:", ["Todos"] + MOCK_FILIAIS) 
     tab_sem, tab_men = st.tabs(["Pedido Semanal", "Pedido Mensal"]) 
     with tab_sem: consolidar_proteina_semanal_geral(restaurante_filtrado) 
     with tab_men: st.info("Módulo mensal em desenvolvimento.")

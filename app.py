@@ -74,6 +74,13 @@ try:
     if "CONFERENCIA_FISICA" not in abas_existentes:
         ws_c = client.add_worksheet(title="CONFERENCIA_FISICA", rows="2000", cols="12")
         ws_c.append_row(["DATA_HORA", "FILIAL", "NUMERO_NF", "FORNECEDOR", "PRODUTO", "QTD_XML", "QTD_REAL", "DIVERGENCIA", "LOTE", "VALIDADE", "TEMPERATURA", "CONFERENTE"])
+    
+    # NOVA ABA: CONFIGURACOES PARA A NUVEM (LIGA/DESLIGA O SISTEMA)
+    if "CONFIGURACOES" not in abas_existentes:
+        ws_conf = client.add_worksheet(title="CONFIGURACOES", rows="10", cols="2")
+        ws_conf.append_row(["CHAVE", "VALOR"])
+        ws_conf.append_row(["STATUS_DIGITACAO", "DESLIGADO"])
+
 except gspread.exceptions.APIError as e:
     client = None
     if e.response.status_code == 429:
@@ -212,15 +219,15 @@ def carregar_dados_filiais_dict():
 # --- CONFIGURAÇÕES E CONSTANTES GERAIS ---
 MOCK_FILIAIS = ["TEJUCO", "CENTRO", "MATOSINHOS", "RM SABOR", "COLONIA", "BARBACENA", "LEOPOLDINA"]
 
+# SOLUÇÃO DEFINITIVA DO PROBLEMA DE PRODUTOS "NÃO LOCALIZADOS"
 @st.cache_data(ttl=600)
 def carregar_proteinas_semanal():
-    arquivo = "SEMANAL_PROTEINAS.xlsx"
     try:
-        if os.path.exists(arquivo):
-            df = pd.read_excel(arquivo)
-            cols = [c for c in df.columns if str(c).strip().upper() == 'PRODUTOS']
-            if not cols: cols = [c for c in df.columns if 'PROD' in str(c).upper()]
-            if cols: return df[cols[0]].dropna().astype(str).str.strip().tolist()
+        dados = buscar_dados_aba_cache("PRODUTOS")
+        if dados:
+            df = pd.DataFrame(dados)
+            if 'PRODUTO' in df.columns:
+                return sorted(df['PRODUTO'].dropna().astype(str).str.strip().unique().tolist())
     except Exception: pass
     return []
 
@@ -284,18 +291,40 @@ if not st.session_state.get('logado', False):
 
 st.markdown("""<style>.stButton>button { background-color: #004A99; color: white; width: 100%; border-radius: 5px; height: 3em; font-weight: bold; } .stButton>button:hover { background-color: #003366; color: white; }</style>""", unsafe_allow_html=True)
 
-GOVERNANCA_FILE = "governanca_status.json"
-DEFAULT_GOVERNANCA = {"libera_digitacao_semanal": False, "libera_digitacao_mensal": False}
-
-def salvar_governanca():
-    governanca = {
-        'libera_digitacao_semanal': bool(st.session_state.get('libera_digitacao_semanal', DEFAULT_GOVERNANCA['libera_digitacao_semanal'])),
-        'libera_digitacao_mensal': bool(st.session_state.get('libera_digitacao_mensal', DEFAULT_GOVERNANCA['libera_digitacao_mensal']))
-    }
-    st.session_state.governanca = governanca
+# --- BOTÃO LIGA/DESLIGA 100% NUVEM (CORRIGIDO PARA ROBUSTEZ) ---
+def ler_status_digitacao():
     try:
-        with open(GOVERNANCA_FILE, 'w', encoding='utf-8') as f: json.dump(governanca, f, indent=4, ensure_ascii=False)
-    except Exception: pass
+        if 'client' in globals() and client is not None:
+            aba = client.worksheet("CONFIGURACOES")
+            dados = aba.get_all_records()
+            if dados:
+                for linha in dados:
+                    if str(linha.get("CHAVE", "")).strip().upper() == "STATUS_DIGITACAO":
+                        return True if str(linha.get("VALOR", "")).strip().upper() == "LIGADO" else False
+    except Exception as e:
+        print(f"Erro ao ler status: {e}")
+    return False
+
+def salvar_governanca(ligado):
+    try:
+        if 'client' in globals() and client is not None:
+            aba = client.worksheet("CONFIGURACOES")
+            novo_valor = "LIGADO" if ligado else "DESLIGADO"
+            
+            # Encontra a linha correta para atualizar para evitar quebrar formatação
+            dados = aba.get_all_records()
+            linha_atualizar = 2 
+            if dados:
+                 for i, linha in enumerate(dados):
+                     if str(linha.get("CHAVE", "")).strip().upper() == "STATUS_DIGITACAO":
+                         linha_atualizar = i + 2 
+                         break
+            
+            aba.update_cell(linha_atualizar, 2, novo_valor)
+            st.session_state['libera_digitacao_semanal'] = ligado
+    except Exception as e: 
+        print(f"Erro ao salvar status: {e}")
+        pass
 
 def encurtar_nome_fornecedor(nome_completo):
     n = str(nome_completo).strip().upper()
@@ -744,7 +773,7 @@ def modulo_cotacao_consolidacao():
                                                 if not l_dec.empty and forn_alvo in l_dec.columns:
                                                     val = l_dec.iloc[0][forn_alvo]
                                                     preco_u = float(val) if pd.notna(val) else 0.0
-                                                    
+                                                
                                                 linhas_espelho.append({
                                                     "Código": "0545",
                                                     "Produto": p_nome,
@@ -869,7 +898,10 @@ def interface_lancamento_proteina_filial(filial_passada="CENTRO"):
         tab_lancamento, tab_conferencia = st.tabs(["📌 Aba 1: Lançamento", "🔍 Aba 2: Conferência"])
         
         with tab_lancamento:
-            if st.session_state.get('nivel') != "Admin" and not st.session_state.get('libera_digitacao_semanal', False):
+            # AGORA ELE LÊ DIRETO DA NUVEM SE ESTÁ LIGADO
+            status_liberado = ler_status_digitacao() 
+            
+            if st.session_state.get('nivel') != "Admin" and not status_liberado:
                 st.warning("🛑 A digitação semanal está fechada pelo Diretor Jardel.")
             else:
                 proteinas_lista = carregar_proteinas_semanal()
@@ -1769,11 +1801,11 @@ elif modulo_selecionado == "🔍 Conferência e Consolidação" or "Conferência
     st.title("🔍 Conferência e Consolidação de Pedidos")
     with st.container(border=True):
         st.markdown("### 🔒 Controle de Acesso")
-        status_atual = st.session_state.get('libera_digitacao_semanal', False)
+        status_atual = ler_status_digitacao()
         trava = st.toggle("Permitir digitação das nutricionistas", value=status_atual)
         if trava != status_atual:
-            st.session_state['libera_digitacao_semanal'] = trava
-            salvar_governanca()
+            salvar_governanca(trava)
+            st.cache_data.clear()
             st.rerun()
             
     restaurante_filtrado = st.selectbox("Filtrar por Restaurante:", ["Todos"] + MOCK_FILIAIS) 

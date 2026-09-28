@@ -227,15 +227,18 @@ def carregar_proteinas_semanal():
     except Exception: pass
     return []
 
-# --- NOVA INTELIGÊNCIA: NORMALIZADOR DE NOMES (IGNORA ESTADO E EMBALAGEM E ACENTOS) ---
+# --- NOVA INTELIGÊNCIA: NORMALIZADOR DE NOMES (IGNORA PREPOSIÇÕES, ESTADO, EMBALAGEM E ACENTOS) ---
 def normalizar_nome_produto(nome):
     n = str(nome).upper().strip()
     n = unicodedata.normalize('NFKD', n).encode('ASCII', 'ignore').decode('utf-8')
+    
     for prep in [" DE ", " DA ", " DO ", " COM "]:
         n = n.replace(prep, " ")
+        
     remover = [" CONGELADO", " CONGELADA", " RESFRIADO", " RESFRIADA", " IN NATURA", " KG", " KGS", " UNID", " UN"]
     for r in remover:
         n = n.replace(r, "")
+        
     return " ".join(n.split()).strip()
 
 # --- CONFIGURAÇÃO DA PÁGINA ---
@@ -344,10 +347,12 @@ def encurtar_nome_fornecedor(nome_completo):
     partes = n.split()
     return partes[0].title() if partes else "Fornecedor"
 
-def tratar_virgula(val):
-    try:
-        if isinstance(val, (int, float)): return float(val)
-        v_str = str(val).strip()
+# --- O TRATADOR DE FLOAT ABSOLUTO (À PROVA DE BALA PARA NÚMEROS E TEXTOS COM VÍRGULAS) ---
+def tratar_preco_float(valor): 
+    try: 
+        if isinstance(valor, (int, float)): return float(valor)
+        v_str = str(valor).replace("R$", "").strip()
+        if not v_str or v_str.lower() == 'nan': return 0.0
         if "," in v_str and "." in v_str:
             if v_str.rfind(",") > v_str.rfind("."): v_str = v_str.replace(".", "").replace(",", ".")
             else: v_str = v_str.replace(",", "")
@@ -443,7 +448,7 @@ def consolidar_proteina_semanal_geral(restaurante_filtro="Todos"):
     if not planilha: return
     dados = buscar_dados_aba_cache("AUDITORIA_CONSOLIDADA")
     if not dados:
-        st.warning("A planilha de auditoria está vazia!")
+        st.warning("A folha de cálculo de auditoria está vazia!")
         return
 
     df_linhas = []
@@ -454,7 +459,7 @@ def consolidar_proteina_semanal_geral(restaurante_filtro="Todos"):
         produto = str(linha.get("PRODUTO", "")).strip()
         try:
             val = linha.get("PEDIDO_NUTRICIONISTA", 0)
-            qtd = float(str(val).replace('.', '').replace(',', '.')) if val else 0.0
+            qtd = tratar_preco_float(val)
         except: qtd = 0.0
         if produto and qtd > 0:
             df_linhas.append({"Filial": filial_reg, "Proteína / Item": produto, "Quantidade Lançada (KG)": qtd, "Status": linha.get("STATUS_VALIDACAO", ""), "Justificativa da Nutricionista": linha.get("JUSTIFICATIVA", "")})
@@ -472,7 +477,7 @@ def consolidar_proteina_semanal_geral(restaurante_filtro="Todos"):
             d_sheets = aba_aud.get_all_records()
             cab_upper = [str(c).strip().upper() for c in aba_aud.row_values(1)]
             for _, r_ed in df_editado.iterrows():
-                f_v, p_v, q_v = str(r_ed["Filial"]).strip().upper(), str(r_ed["Proteína / Item"]).strip().upper(), float(r_ed["Quantidade Lançada (KG)"])
+                f_v, p_v, q_v = str(r_ed["Filial"]).strip().upper(), str(r_ed["Proteína / Item"]).strip().upper(), tratar_preco_float(r_ed["Quantidade Lançada (KG)"])
                 for idx_s, r_s in enumerate(d_sheets, start=2):
                     if str(r_s.get("RESTAURANTE", "")).strip().upper() == f_v and str(r_s.get("PRODUTO", "")).strip().upper() == p_v:
                         if "PEDIDO_NUTRICIONISTA" in cab_upper: aba_aud.update_cell(idx_s, cab_upper.index("PEDIDO_NUTRICIONISTA") + 1, q_v)
@@ -526,39 +531,6 @@ def modulo_cotacao_consolidacao():
             df_bruto = pd.DataFrame(dados_cotacao_brutos) 
             df_bruto.columns = [str(c).strip().upper() for c in df_bruto.columns] 
 
-        def tratar_preco_float(valor): 
-            try: 
-                if isinstance(valor, (int, float)): 
-                    val = float(valor)
-                    if val > 100 and val % 1 != 0: return val
-                    elif val >= 100 and val == int(val) and val not in [100, 200, 500, 1000]: return val / 100.0
-                    elif val >= 40 and val < 100 and val % 1 == 0: return val / 10.0
-                    return val
-                v_str = str(valor).strip()
-                if not v_str or v_str.lower() == 'nan': return 0.0
-                v_str = v_str.replace("R$", "").strip()
-                if "," in v_str and "." in v_str:
-                    if v_str.rfind(",") > v_str.rfind("."): v_str = v_str.replace(".", "").replace(",", ".")
-                    else: v_str = v_str.replace(",", "")
-                elif "," in v_str and "." not in v_str: v_str = v_str.replace(",", ".")
-                num = float(v_str)
-                if num > 1000 and num % 100 == 0: return num / 100.0
-                elif num >= 40 and num < 100 and num % 1 == 0: return num / 10.0
-                return num
-            except: return 0.0
-
-        def tratar_qtd_float(valor):
-            try:
-                if isinstance(valor, (int, float)): return float(valor)
-                v_str = str(valor).strip()
-                if not v_str or v_str.lower() == 'nan': return 0.0
-                if "," in v_str and "." in v_str:
-                    if v_str.rfind(",") > v_str.rfind("."): v_str = v_str.replace(".", "").replace(",", ".")
-                    else: v_str = v_str.replace(",", "")
-                elif "," in v_str and "." not in v_str: v_str = v_str.replace(",", ".")
-                return float(v_str)
-            except: return 0.0
-                
         if "PRECO_PACOTE" in df_bruto.columns: df_bruto["PRECO_PACOTE"] = df_bruto["PRECO_PACOTE"].apply(tratar_preco_float)
         if "PESO_EMBALAGEM" in df_bruto.columns: df_bruto["PESO_EMBALAGEM"] = df_bruto["PESO_EMBALAGEM"].apply(tratar_preco_float)
 
@@ -578,7 +550,7 @@ def modulo_cotacao_consolidacao():
                     df_aprovados = df_auditoria_total[df_auditoria_total["STATUS_VALIDACAO"] == "APROVADO"] if "STATUS_VALIDACAO" in df_auditoria_total.columns else df_auditoria_total 
 
                     if not df_aprovados.empty and all(c in df_aprovados.columns for c in ["PRODUTO", "RESTAURANTE", "PEDIDO_NUTRICIONISTA"]): 
-                        df_aprovados["PEDIDO_NUTRICIONISTA"] = df_aprovados["PEDIDO_NUTRICIONISTA"].apply(tratar_qtd_float) 
+                        df_aprovados["PEDIDO_NUTRICIONISTA"] = df_aprovados["PEDIDO_NUTRICIONISTA"].apply(tratar_preco_float) 
                         df_grade_filiais = df_aprovados.pivot_table(index="PRODUTO", columns="RESTAURANTE", values="PEDIDO_NUTRICIONISTA", aggfunc="sum").fillna(0.0).reset_index() 
                         df_grade_filiais.columns.name = None 
                         colunas_restaurantes = [col for col in df_grade_filiais.columns if col != "PRODUTO"] 
@@ -723,7 +695,7 @@ def modulo_cotacao_consolidacao():
                                 lista_carrinho = []
                                 for _, row_i in df_itens_filial.iterrows():
                                     produto_nome = str(row_i.get("PRODUTO", "")).strip()
-                                    qtd_nutri_original = tratar_qtd_float(row_i.get("PEDIDO_NUTRICIONISTA", 0.0))
+                                    qtd_nutri_original = tratar_preco_float(row_i.get("PEDIDO_NUTRICIONISTA", 0.0))
 
                                     vencedor_aba2 = forn_lista[0] if forn_lista else "FORNECEDOR PADRÃO"
                                     l_dec = df_dec[df_dec["PRODUTO"] == produto_nome]
@@ -772,7 +744,7 @@ def modulo_cotacao_consolidacao():
                                             linhas_espelho = []
                                             for _, row_item in df_f_pedidos.iterrows():
                                                 p_nome = row_item["Produto"]
-                                                p_qtd = row_item["Qtd Solicitada"]
+                                                p_qtd = tratar_preco_float(row_item["Qtd Solicitada"])
                                                 
                                                 preco_u = 0.0
                                                 l_dec = df_dec[df_dec["PRODUTO"] == p_nome]
@@ -848,8 +820,8 @@ def modulo_cotacao_consolidacao():
                                                                 f"{num_seq:04d}",
                                                                 forn_alvo,
                                                                 str(row_grv["Produto"]),
-                                                                float(row_grv["Qtd"]),
-                                                                float(row_grv["Total"]),
+                                                                tratar_preco_float(row_grv["Qtd"]),
+                                                                tratar_preco_float(row_grv["Total"]),
                                                                 "ATIVO",
                                                                 str_prev_entrega,
                                                                 ""
@@ -1169,8 +1141,8 @@ def modulo_compras_suprimentos():
                                         str(lista_valores[2]),
                                         str(lista_valores[3]),
                                         str(lista_valores[4]),
-                                        float(lista_valores[5]) if str(lista_valores[5]).replace('.','',1).isdigit() else 0.0,
-                                        float(lista_valores[6]) if str(lista_valores[6]).replace('.','',1).isdigit() else 0.0,
+                                        tratar_preco_float(lista_valores[5]),
+                                        tratar_preco_float(lista_valores[6]),
                                         "FINALIZADO",
                                         str(lista_valores[8]),
                                         str(lista_valores[9]) if len(lista_valores) > 9 else "",
@@ -1248,7 +1220,7 @@ def modulo_compras_suprimentos():
             st.session_state["contador_editor_manual"] = 0
 
         df_vazio_manual = pd.DataFrame([
-            {"Código Interno": "", "Produto / Descrição": "", "Quantidade": 0.0, "Preço Unitário (R$)": 0.0}
+            {"Código Interno": "", "Produto / Descrição": "", "Quantidade": "0.0", "Preço Unitário (R$)": "0.0"}
             for _ in range(25)
         ])
 
@@ -1257,8 +1229,8 @@ def modulo_compras_suprimentos():
             column_config={
                 "Código Interno": st.column_config.TextColumn("Cód. Interno", width="small"),
                 "Produto / Descrição": st.column_config.SelectboxColumn("Descrição do Produto", options=[""] + lista_nomes_prod, width="large", required=False),
-                "Quantidade": st.column_config.NumberColumn("Quantidade / KG", min_value=0.0, step=1.0, format="%.2f"),
-                "Preço Unitário (R$)": st.column_config.NumberColumn("Preço Unit. (R$)", min_value=0.0, step=0.01, format="R$ %.2f")
+                "Quantidade": st.column_config.TextColumn("Quantidade / KG"),
+                "Preço Unitário (R$)": st.column_config.TextColumn("Preço Unit. (R$)")
             },
             hide_index=True,
             use_container_width=True,
@@ -1272,14 +1244,14 @@ def modulo_compras_suprimentos():
                 for _, r_item in df_itens_digitados.iterrows():
                     c_int = str(r_item["Código Interno"]).strip()
                     p_desc = str(r_item["Produto / Descrição"]).strip()
-                    q_val = float(r_item["Quantidade"]) if str(r_item["Quantidade"]).replace('.','',1).isdigit() else 0.0
+                    q_val = tratar_preco_float(r_item["Quantidade"])
                     
                     if c_int and not p_desc:
                         p_desc = cod_para_prod.get(c_int, f"CÓDIGO {c_int}")
                     elif p_desc and not c_int:
                         c_int = prod_para_cod.get(p_desc.upper(), "0545")
                     
-                    p_unit = float(r_item["Preço Unitário (R$)"]) if str(r_item["Preço Unitário (R$)"]).replace('.','',1).isdigit() else 0.0
+                    p_unit = tratar_preco_float(r_item["Preço Unitário (R$)"])
                     if p_unit <= 0 and p_desc.upper() in precos_base_map:
                         p_unit = precos_base_map[p_desc.upper()]
 
@@ -1433,7 +1405,7 @@ def modulo_entrada_xml():
                 
                 # --- 1. FATOR DA NOTA FISCAL COM PRÉVIA EM TEMPO REAL ---
                 df_fator = df_itens[["Seq", "Cód Fornecedor", "Descrição NF", "Produto Interno", "Qtd", "Custo Total Real"]].copy()
-                df_fator["Fator de Conversão"] = 1.0 
+                df_fator["Fator de Conversão"] = "1.0"
                 
                 st.markdown("#### 1️⃣ Fator de Conversão DA NOTA FISCAL")
                 st.caption("Ajusta o fator se necessário e acompanha a prévia de conversão do estoque em tempo real.")
@@ -1445,7 +1417,7 @@ def modulo_entrada_xml():
                         "Descrição NF": st.column_config.TextColumn(disabled=True), "Produto Interno": st.column_config.TextColumn(disabled=True),
                         "Qtd": st.column_config.NumberColumn("Qtd (Nota)", disabled=True),
                         "Custo Total Real": st.column_config.NumberColumn("Custo Total (R$)", disabled=True, format="R$ %.2f"),
-                        "Fator de Conversão": st.column_config.NumberColumn("Fator (Multiplicador)", min_value=0.01, step=1.0, format="%.2f", required=True)
+                        "Fator de Conversão": st.column_config.TextColumn("Fator (Multiplicador)", required=True)
                     },
                     hide_index=True, use_container_width=True, key="editor_fator_conversao"
                 )
@@ -1455,7 +1427,7 @@ def modulo_entrada_xml():
                 previa_linhas = []
                 for _, r_prev in df_fator_editado.iterrows():
                     r_orig_p = df_itens[df_itens["Seq"] == r_prev["Seq"]].iloc[0]
-                    f_prev = float(r_prev["Fator de Conversão"])
+                    f_prev = tratar_preco_float(r_prev["Fator de Conversão"])
                     q_nota_prev = float(r_orig_p["Qtd"])
                     c_tot_prev = float(r_orig_p["Custo Total Real"])
                     
@@ -1531,7 +1503,7 @@ def modulo_entrada_xml():
                     
                     st.markdown("#### ⚖️ Fator de Conversão DO PEDIDO")
                     df_pedido_show = df_pedido[["PRODUTO", "QUANTIDADE", "VALOR_TOTAL"]].copy()
-                    df_pedido_show["Fator do Pedido"] = 1.0
+                    df_pedido_show["Fator do Pedido"] = "1.0"
                     
                     df_pedido_fator_editado = st.data_editor(
                         df_pedido_show,
@@ -1539,7 +1511,7 @@ def modulo_entrada_xml():
                             "PRODUTO": st.column_config.TextColumn(disabled=True),
                             "QUANTIDADE": st.column_config.NumberColumn("Qtd Pedido (Original)", disabled=True),
                             "VALOR_TOTAL": st.column_config.NumberColumn("Valor Total Pedido", disabled=True),
-                            "Fator do Pedido": st.column_config.NumberColumn("Fator (Multiplicador)", min_value=0.01, step=1.0, format="%.2f", required=True)
+                            "Fator do Pedido": st.column_config.TextColumn("Fator (Multiplicador)", required=True)
                         },
                         hide_index=True, use_container_width=True, key="editor_fator_pedido"
                     )
@@ -1547,13 +1519,13 @@ def modulo_entrada_xml():
                     comparacao, produtos_nf = [], []
                     for _, r_ed in df_fator_editado.iterrows():
                         prod_nf = r_ed["Produto Interno"]
-                        fator_nf, qtd_nota, custo_tot_nf = float(r_ed["Fator de Conversão"]), float(df_itens[df_itens["Seq"] == r_ed["Seq"]].iloc[0]["Qtd"]), float(df_itens[df_itens["Seq"] == r_ed["Seq"]].iloc[0]["Custo Total Real"])
+                        fator_nf, qtd_nota, custo_tot_nf = tratar_preco_float(r_ed["Fator de Conversão"]), float(df_itens[df_itens["Seq"] == r_ed["Seq"]].iloc[0]["Qtd"]), float(df_itens[df_itens["Seq"] == r_ed["Seq"]].iloc[0]["Custo Total Real"])
                         qtd_final_nf = qtd_nota * fator_nf
                         preco_unit_nf = custo_tot_nf / qtd_final_nf if qtd_final_nf > 0 else 0
                         
                         item_ped = df_pedido_fator_editado[df_pedido_fator_editado["PRODUTO"].astype(str).str.upper() == prod_nf.upper()]
                         if not item_ped.empty:
-                            qtd_ped_orig, val_tot_ped, fator_ped = float(item_ped.iloc[0]["QUANTIDADE"]), float(item_ped.iloc[0]["VALOR_TOTAL"]), float(item_ped.iloc[0]["Fator do Pedido"])
+                            qtd_ped_orig, val_tot_ped, fator_ped = float(item_ped.iloc[0]["QUANTIDADE"]), float(item_ped.iloc[0]["VALOR_TOTAL"]), tratar_preco_float(item_ped.iloc[0]["Fator do Pedido"])
                             qtd_final_ped = qtd_ped_orig * fator_ped
                             preco_unit_ped = val_tot_ped / qtd_final_ped if qtd_final_ped > 0 else 0
                             
@@ -1568,7 +1540,7 @@ def modulo_entrada_xml():
                         
                     for _, r_ped in df_pedido_fator_editado.iterrows():
                         if str(r_ped["PRODUTO"]).upper() not in produtos_nf:
-                            qtd_final_ped = float(r_ped["QUANTIDADE"]) * float(r_ped["Fator do Pedido"])
+                            qtd_final_ped = float(r_ped["QUANTIDADE"]) * tratar_preco_float(r_ped["Fator do Pedido"])
                             comparacao.append({"Produto": r_ped["PRODUTO"], "Qtd NF": 0.0, "Qtd Pedido": qtd_final_ped, "Status Qtd": "❌ CORTE TOTAL", "Preço NF (Un)": 0.0, "Preço Acordado": 0.0, "Status Preço": "N/A"})
                             
                     df_comp = pd.DataFrame(comparacao)
@@ -1596,7 +1568,7 @@ def modulo_entrada_xml():
                             
                             for _, r_ed in df_fator_editado.iterrows():
                                 seq, r_orig = r_ed["Seq"], df_itens[df_itens["Seq"] == r_ed["Seq"]].iloc[0]
-                                fator, qtd_nota, custo_tot = float(r_ed["Fator de Conversão"]), float(r_orig["Qtd"]), float(r_orig["Custo Total Real"])
+                                fator, qtd_nota, custo_tot = tratar_preco_float(r_ed["Fator de Conversão"]), float(r_orig["Qtd"]), float(r_orig["Custo Total Real"])
                                 qtd_final = qtd_nota * fator
                                 custo_unit_final = custo_tot / qtd_final if qtd_final > 0 else 0.0
                                 ncm_final = str(r_orig["NCM"]).strip()
@@ -1696,7 +1668,7 @@ def modulo_recebimento_fisico():
             lista_conferencia.append({
                 "Produto": produto,
                 "Qtd Esperada (NF)": qtd_xml,
-                "Qtd Real que Chegou": 0.0,
+                "Qtd Real que Chegou": "0.0",
                 "Lote": "",
                 "Validade (DD/MM/AAAA)": "",
                 "Temperatura ºC": "0.0" if precisa_temp else "Não se aplica"
@@ -1707,7 +1679,7 @@ def modulo_recebimento_fisico():
         config_colunas = {
             "Produto": st.column_config.TextColumn("Produto", disabled=True),
             "Qtd Esperada (NF)": st.column_config.NumberColumn("Qtd NF", disabled=True),
-            "Qtd Real que Chegou": st.column_config.NumberColumn("Qtd Recebida Físico", min_value=0.0, step=0.1, required=True),
+            "Qtd Real que Chegou": st.column_config.TextColumn("Qtd Recebida Físico", required=True),
             "Lote": st.column_config.TextColumn("Lote", required=False),
             "Validade (DD/MM/AAAA)": st.column_config.TextColumn("Validade", required=False),
             "Temperatura ºC": st.column_config.TextColumn("Temp. ºC", required=False) 
@@ -1734,15 +1706,15 @@ def modulo_recebimento_fisico():
                     for _, row_ed in df_editado.iterrows():
                         prod = row_ed["Produto"]
                         qtd_xml = float(row_ed["Qtd Esperada (NF)"])
-                        qtd_real = float(row_ed["Qtd Real que Chegou"])
+                        qtd_real = tratar_preco_float(row_ed["Qtd Real que Chegou"])
                         lote = str(row_ed["Lote"])
                         validade = str(row_ed["Validade (DD/MM/AAAA)"])
                         temp = str(row_ed["Temperatura ºC"])
 
                         divergencia = qtd_real - qtd_xml
-                        status_div = "OK" if divergencia == 0 else f"FALTA {abs(divergencia)}" if divergencia < 0 else f"SOBRA {divergencia}"
+                        status_div = "OK" if abs(divergencia) < 0.01 else f"FALTA {abs(divergencia)}" if divergencia < 0 else f"SOBRA {divergencia}"
 
-                        if divergencia != 0:
+                        if abs(divergencia) >= 0.01:
                             divergencias_encontradas.append((prod, qtd_xml, qtd_real, status_div))
 
                         ws_conf.append_row([
@@ -1847,7 +1819,7 @@ elif modulo_selecionado == "🤝 Portal de Cotação":
     st.success(f"🏢 Empresa Logada: {fornecedor_logado}") 
     st.markdown("---")
     st.markdown("### 📝 Digitação de Preços (Lote Aberto)")
-    st.info("Preenche o valor do pacote e o peso da embalagem. O sistema calculará o preço por KG automaticamente para a concorrência.")
+    st.info("Preenche o valor do pacote e o peso da embalagem. O sistema calculará o preço por KG automaticamente para a concorrência. Se não tiver o produto, deixa a R$ 0,00.")
     
     try:
         dados_auditoria_brutos = buscar_dados_aba_cache("AUDITORIA_CONSOLIDADA") 
@@ -1867,9 +1839,8 @@ elif modulo_selecionado == "🤝 Portal de Cotação":
                 for prod in produtos_unicos:
                     linhas_cotacao.append({
                         "Produto": prod,
-                        "Preço Pacote/Caixa (R$)": 0.0,
-                        "Peso Embalagem (KG)": 1.0,
-                        "Temos em Estoque?": True
+                        "Preço Pacote/Caixa (R$)": "0.00",
+                        "Peso Embalagem (KG)": "1.000"
                     })
                     
                 df_cot = pd.DataFrame(linhas_cotacao)
@@ -1878,9 +1849,8 @@ elif modulo_selecionado == "🤝 Portal de Cotação":
                     df_cot,
                     column_config={
                         "Produto": st.column_config.TextColumn(disabled=True),
-                        "Preço Pacote/Caixa (R$)": st.column_config.NumberColumn(min_value=0.0, format="R$ %.2f"),
-                        "Peso Embalagem (KG)": st.column_config.NumberColumn(min_value=0.01, format="%.3f"),
-                        "Temos em Estoque?": st.column_config.CheckboxColumn(default=True)
+                        "Preço Pacote/Caixa (R$)": st.column_config.TextColumn(required=True),
+                        "Peso Embalagem (KG)": st.column_config.TextColumn(required=True)
                     },
                     hide_index=True,
                     use_container_width=True,
@@ -1895,9 +1865,10 @@ elif modulo_selecionado == "🤝 Portal de Cotação":
                             ts_agora = dt_mod.now().strftime('%d/%m/%Y %H:%M:%S')
                             
                             for _, row in df_editado_forn.iterrows():
-                                preco_pacote = float(row["Preço Pacote/Caixa (R$)"])
-                                if preco_pacote > 0 and row["Temos em Estoque?"]:
-                                    peso = float(row["Peso Embalagem (KG)"])
+                                preco_pacote = tratar_preco_float(row["Preço Pacote/Caixa (R$)"])
+                                if preco_pacote > 0:
+                                    peso = tratar_preco_float(row["Peso Embalagem (KG)"])
+                                    peso = peso if peso > 0 else 1.0
                                     preco_kg_calc = round(preco_pacote / peso, 4)
                                     
                                     # Colunas: DATA_HORA, COD_FORN, FORNECEDOR, PRODUTO, PRECO_PACOTE, UNIDADE, PESO_EMBALAGEM, QTD_MASTER, PRECO_KG_EQUIV, PRECO_CAIXA_MASTER

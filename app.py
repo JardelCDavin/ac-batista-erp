@@ -20,7 +20,6 @@ import unicodedata
 def inicializar_gspread():
     if 'gcp_service_account' in st.secrets:
         credenciais = dict(st.secrets['gcp_service_account'])
-        # Vacina contra erro de RSA: garante que as quebras de linha sejam lidas corretamente
         if 'private_key' in credenciais:
             credenciais['private_key'] = credenciais['private_key'].replace('\\n', '\n')
         return gspread.service_account_from_dict(credenciais)
@@ -228,14 +227,19 @@ def carregar_proteinas_semanal():
     except Exception: pass
     return []
 
-# --- NOVA INTELIGÊNCIA: NORMALIZADOR DE NOMES (IGNORA ESTADO E EMBALAGEM E ACENTOS) ---
+# --- NOVA INTELIGÊNCIA: NORMALIZADOR DE NOMES (IGNORA PREPOSIÇÕES, ESTADO, EMBALAGEM E ACENTOS) ---
 def normalizar_nome_produto(nome):
     n = str(nome).upper().strip()
     n = unicodedata.normalize('NFKD', n).encode('ASCII', 'ignore').decode('utf-8')
+    
+    for prep in [" DE ", " DA ", " DO ", " COM "]:
+        n = n.replace(prep, " ")
+        
     remover = [" CONGELADO", " CONGELADA", " RESFRIADO", " RESFRIADA", " IN NATURA", " KG", " KGS", " UNID", " UN"]
     for r in remover:
         n = n.replace(r, "")
-    return n.strip()
+        
+    return " ".join(n.split()).strip()
 
 # --- CONFIGURAÇÃO DA PÁGINA ---
 st.set_page_config(page_title="Portal AC Batista", layout="wide")

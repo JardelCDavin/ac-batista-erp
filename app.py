@@ -13,12 +13,14 @@ from reportlab.lib import colors
 from reportlab.lib.pagesizes import letter
 from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
 from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
+import unicodedata
 
 # --- CONEXÃO INTELIGENTE COM O GOOGLE SHEETS (CORREÇÃO STREAMLIT CLOUD) ---
 @st.cache_resource
 def inicializar_gspread():
     if 'gcp_service_account' in st.secrets:
         credenciais = dict(st.secrets['gcp_service_account'])
+        # Vacina contra erro de RSA: garante que as quebras de linha sejam lidas corretamente
         if 'private_key' in credenciais:
             credenciais['private_key'] = credenciais['private_key'].replace('\\n', '\n')
         return gspread.service_account_from_dict(credenciais)
@@ -226,11 +228,10 @@ def carregar_proteinas_semanal():
     except Exception: pass
     return []
 
-# --- NOVA INTELIGÊNCIA: NORMALIZADOR DE NOMES (IGNORA ESTADO E EMBALAGEM) ---
+# --- NOVA INTELIGÊNCIA: NORMALIZADOR DE NOMES (IGNORA ESTADO E EMBALAGEM E ACENTOS) ---
 def normalizar_nome_produto(nome):
-    """Limpa palavras de estado do produto para garantir que 'SASSAMI CONGELADO' ache 'SASSAMI KG' nos cálculos do contrato."""
     n = str(nome).upper().strip()
-    # Adicionamos espaço antes de cada palavra para não cortar pedaços de outras palavras
+    n = unicodedata.normalize('NFKD', n).encode('ASCII', 'ignore').decode('utf-8')
     remover = [" CONGELADO", " CONGELADA", " RESFRIADO", " RESFRIADA", " IN NATURA", " KG", " KGS", " UNID", " UN"]
     for r in remover:
         n = n.replace(r, "")
@@ -1828,7 +1829,7 @@ elif modulo_selecionado == "🔍 Conferência e Consolidação" or "Conferência
                             st.cache_data.clear()
                             st.rerun()
             except Exception as e:
-                st.error(f"⚠️ O Google bloqueou a ação temporariamente por segurança (limite de velocidade). Aguarda 1 minuto e tenta novamente! Erro técnico: {e}")
+                st.error(f"⚠️ O Google bloqueou a ação temporariamente por segurança (limite de velocidade). Aguarde 1 minuto e tente novamente! Erro técnico: {e}")
             
     restaurante_filtrado = st.selectbox("Filtrar por Restaurante:", ["Todos"] + MOCK_FILIAIS) 
     tab_sem, tab_men = st.tabs(["Pedido Semanal", "Pedido Mensal"]) 

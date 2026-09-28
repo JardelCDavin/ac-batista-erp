@@ -227,18 +227,15 @@ def carregar_proteinas_semanal():
     except Exception: pass
     return []
 
-# --- NOVA INTELIGÊNCIA: NORMALIZADOR DE NOMES (IGNORA PREPOSIÇÕES, ESTADO, EMBALAGEM E ACENTOS) ---
+# --- NOVA INTELIGÊNCIA: NORMALIZADOR DE NOMES ---
 def normalizar_nome_produto(nome):
     n = str(nome).upper().strip()
     n = unicodedata.normalize('NFKD', n).encode('ASCII', 'ignore').decode('utf-8')
-    
     for prep in [" DE ", " DA ", " DO ", " COM "]:
         n = n.replace(prep, " ")
-        
     remover = [" CONGELADO", " CONGELADA", " RESFRIADO", " RESFRIADA", " IN NATURA", " KG", " KGS", " UNID", " UN"]
     for r in remover:
         n = n.replace(r, "")
-        
     return " ".join(n.split()).strip()
 
 # --- CONFIGURAÇÃO DA PÁGINA ---
@@ -322,19 +319,16 @@ def salvar_governanca(ligado):
         aba = cli.worksheet("CONFIGURACOES")
         novo_valor = "LIGADO" if ligado else "DESLIGADO"
         dados = aba.get_all_values()
-        
         lin_alvo = -1
         if dados:
             for i, linha in enumerate(dados):
                 if len(linha) > 0 and str(linha[0]).strip().upper() == "STATUS_DIGITACAO":
                     lin_alvo = i + 1
                     break
-        
         if lin_alvo != -1:
             aba.update_cell(lin_alvo, 2, novo_valor)
         else:
             aba.append_row(["STATUS_DIGITACAO", novo_valor])
-            
         st.session_state['libera_digitacao_semanal'] = ligado
 
 def encurtar_nome_fornecedor(nome_completo):
@@ -347,17 +341,34 @@ def encurtar_nome_fornecedor(nome_completo):
     partes = n.split()
     return partes[0].title() if partes else "Fornecedor"
 
-# --- O TRATADOR DE FLOAT ABSOLUTO (À PROVA DE BALA PARA NÚMEROS E TEXTOS COM VÍRGULAS) ---
+# --- O TRATADOR DE FLOAT ABSOLUTO E VACINA PARA NUVEM ---
 def tratar_preco_float(valor): 
     try: 
-        if isinstance(valor, (int, float)): return float(valor)
+        if isinstance(valor, (int, float)): 
+            val = float(valor)
+            if val >= 100 and val % 1 == 0 and val not in [100, 200, 500, 1000]: 
+                return val / 100.0
+            elif val >= 40 and val < 100 and val % 1 == 0: 
+                return val / 10.0
+            return val
+        
         v_str = str(valor).replace("R$", "").strip()
         if not v_str or v_str.lower() == 'nan': return 0.0
+        
         if "," in v_str and "." in v_str:
-            if v_str.rfind(",") > v_str.rfind("."): v_str = v_str.replace(".", "").replace(",", ".")
-            else: v_str = v_str.replace(",", "")
-        elif "," in v_str and "." not in v_str: v_str = v_str.replace(",", ".")
-        return float(v_str)
+            if v_str.rfind(",") > v_str.rfind("."): 
+                v_str = v_str.replace(".", "").replace(",", ".")
+            else: 
+                v_str = v_str.replace(",", "")
+        elif "," in v_str and "." not in v_str: 
+            v_str = v_str.replace(",", ".")
+            
+        num = float(v_str)
+        if num >= 100 and num % 1 == 0 and num not in [100, 200, 500, 1000]:
+            return num / 100.0
+        elif num >= 40 and num < 100 and num % 1 == 0: 
+            return num / 10.0
+        return num
     except: return 0.0
 
 # --- GERADOR DE PDF PROFISSIONAL (REPORTLAB) ---
@@ -480,7 +491,7 @@ def consolidar_proteina_semanal_geral(restaurante_filtro="Todos"):
                 f_v, p_v, q_v = str(r_ed["Filial"]).strip().upper(), str(r_ed["Proteína / Item"]).strip().upper(), tratar_preco_float(r_ed["Quantidade Lançada (KG)"])
                 for idx_s, r_s in enumerate(d_sheets, start=2):
                     if str(r_s.get("RESTAURANTE", "")).strip().upper() == f_v and str(r_s.get("PRODUTO", "")).strip().upper() == p_v:
-                        if "PEDIDO_NUTRICIONISTA" in cab_upper: aba_aud.update_cell(idx_s, cab_upper.index("PEDIDO_NUTRICIONISTA") + 1, q_v)
+                        if "PEDIDO_NUTRICIONISTA" in cab_upper: aba_aud.update_cell(idx_s, cab_upper.index("PEDIDO_NUTRICIONISTA") + 1, f"{q_v:.3f}".replace(".", ","))
                         if "STATUS_VALIDACAO" in cab_upper: aba_aud.update_cell(idx_s, cab_upper.index("STATUS_VALIDACAO") + 1, "APROVADO")
             st.success("✅ Guardado com sucesso!")
             st.cache_data.clear(); time_lib.sleep(1); st.rerun()
@@ -625,8 +636,8 @@ def modulo_cotacao_consolidacao():
                                     r_ab.get("PEDIDO_NUM", ""),
                                     r_ab.get("FORNECEDOR", ""),
                                     r_ab.get("PRODUTO", ""),
-                                    r_ab.get("QUANTIDADE", 0),
-                                    r_ab.get("VALOR_TOTAL", 0),
+                                    tratar_preco_float(r_ab.get("QUANTIDADE", 0)),
+                                    tratar_preco_float(r_ab.get("VALOR_TOTAL", 0)),
                                     "FINALIZADO",
                                     r_ab.get("DATA_PREVISAO_ENTREGA", ""),
                                     r_ab.get("NUMERO_NF", ""),
@@ -820,8 +831,8 @@ def modulo_cotacao_consolidacao():
                                                                 f"{num_seq:04d}",
                                                                 forn_alvo,
                                                                 str(row_grv["Produto"]),
-                                                                tratar_preco_float(row_grv["Qtd"]),
-                                                                tratar_preco_float(row_grv["Total"]),
+                                                                f"{tratar_preco_float(row_grv['Qtd']):.3f}".replace(".", ","),
+                                                                f"{tratar_preco_float(row_grv['Total']):.2f}".replace(".", ","),
                                                                 "ATIVO",
                                                                 str_prev_entrega,
                                                                 ""
@@ -974,7 +985,11 @@ def interface_lancamento_proteina_filial(filial_passada="CENTRO"):
                                 aba_auditoria = client.worksheet("AUDITORIA_CONSOLIDADA")
                                 aba_auditoria.append_row([
                                     str(dt_mod.now().strftime('%d/%m/%Y %H:%M:%S')), filial_selected, produto_selecionado, 
-                                    st.session_state['semana_atual'], float(stock_input), float(pedido_input), round(pedido_sugerido, 2), status_v, jst
+                                    st.session_state['semana_atual'], 
+                                    f"{stock_input:.3f}".replace(".", ","), 
+                                    f"{pedido_input:.3f}".replace(".", ","), 
+                                    f"{pedido_sugerido:.3f}".replace(".", ","), 
+                                    status_v, jst
                                 ])
                                 st.success("✔️ Adicionado! Vai para a Aba 2 para Conferir e Enviar ao Diretor.")
                                 st.cache_data.clear()
@@ -1008,7 +1023,7 @@ def interface_lancamento_proteina_filial(filial_passada="CENTRO"):
                                 if col not in df_f.columns: df_f[col] = ""
                             df_ex = df_f[cols_necessarias].copy()
                             
-                            df_ex["PEDIDO_NUTRICIONISTA"] = df_ex["PEDIDO_NUTRICIONISTA"].apply(tratar_virgula)
+                            df_ex["PEDIDO_NUTRICIONISTA"] = df_ex["PEDIDO_NUTRICIONISTA"].apply(tratar_preco_float)
                             df_ex.columns = ["Excluir?", "Produto", "Semana", "Qtd Solicitada (KG)", "Status", "Justificativa Operacional"]
                             
                             cfg = {
@@ -1047,7 +1062,7 @@ def interface_lancamento_proteina_filial(filial_passada="CENTRO"):
                                                 if item_editado["Excluir?"]: indices_para_deletar.append(idx_s)
                                                 else:
                                                     qtd_final_float = float(item_editado['Qtd Solicitada (KG)'])
-                                                    aba_auditoria.update_cell(idx_s, 6, qtd_final_float)
+                                                    aba_auditoria.update_cell(idx_s, 6, f"{qtd_final_float:.3f}".replace(".", ","))
                                                     aba_auditoria.update_cell(idx_s, 9, str(item_editado["Justificativa Operacional"]))
                                                     aba_auditoria.update_cell(idx_s, 8, "CONCLUÍDO FILIAL")
                                                 
@@ -1283,8 +1298,8 @@ def modulo_compras_suprimentos():
                             str(m_pedido_num).strip(),
                             m_forn,
                             item_g["produto"],
-                            item_g["qtd"],
-                            item_g["valor"],
+                            f"{item_g['qtd']:.3f}".replace(".", ","),
+                            f"{item_g['valor']:.2f}".replace(".", ","),
                             "ATIVO",
                             str_prev_entrega,
                             ""
@@ -1573,12 +1588,12 @@ def modulo_entrada_xml():
                                 custo_unit_final = custo_tot / qtd_final if qtd_final > 0 else 0.0
                                 ncm_final = str(r_orig["NCM"]).strip()
                                 
-                                aba_h.append_row([ts, dt_str, filial_checkin, pedido_selecionado if pedido_selecionado != "Entrada Avulsa (Sem Pedido)" else "ENTRADA_XML", nome_emit, str(r_orig["Produto Interno"]), qtd_final, round(custo_tot, 2), "BAIXADO (NF-e)", dt_str, f"'{num_nf}", f"'{ncm_final}", "", float(r_orig["ST (R$)"]), round(custo_unit_final, 4)])
+                                aba_h.append_row([ts, dt_str, filial_checkin, pedido_selecionado if pedido_selecionado != "Entrada Avulsa (Sem Pedido)" else "ENTRADA_XML", nome_emit, str(r_orig["Produto Interno"]), f"{qtd_final:.3f}".replace(".", ","), f"{custo_tot:.2f}".replace(".", ","), "BAIXADO (NF-e)", dt_str, f"'{num_nf}", f"'{ncm_final}", "", f"{float(r_orig['ST (R$)']):.2f}".replace(".", ","), f"{custo_unit_final:.4f}".replace(".", ",")])
                                 
                                 prod_int_nome = str(r_orig["Produto Interno"]).strip().upper()
                                 for row_i, row_data in enumerate(grid_p):
                                     if row_i > 0 and len(row_data) > idx_prod_col and str(row_data[idx_prod_col]).strip().upper() == prod_int_nome:
-                                        aba_p.update_cell(row_i + 1, idx_preco, custo_unit_final)
+                                        aba_p.update_cell(row_i + 1, idx_preco, f"{custo_unit_final:.4f}".replace(".", ","))
                                         if idx_ncm != -1 and ncm_final and not (len(row_data) > (idx_ncm-1) and str(row_data[idx_ncm-1]).strip()):
                                             aba_p.update_cell(row_i + 1, idx_ncm, f"'{ncm_final}")
                                         break
@@ -1719,7 +1734,7 @@ def modulo_recebimento_fisico():
 
                         ws_conf.append_row([
                             ts_agora, filial_selected, str(nf_selecionada), fornecedor_nf,
-                            prod, qtd_xml, qtd_real, status_div, lote, validade, temp, conferente
+                            prod, f"{qtd_xml:.3f}".replace(".", ","), f"{qtd_real:.3f}".replace(".", ","), status_div, lote, validade, temp, conferente
                         ])
 
                     ws_ab = client.worksheet("PEDIDOS_ABERTOS")
@@ -1871,18 +1886,23 @@ elif modulo_selecionado == "🤝 Portal de Cotação":
                                     peso = peso if peso > 0 else 1.0
                                     preco_kg_calc = round(preco_pacote / peso, 4)
                                     
+                                    # Formata explicitamente para string com vírgula para não haver erros no Excel
+                                    preco_pacote_str = f"{preco_pacote:.2f}".replace(".", ",")
+                                    peso_str = f"{peso:.3f}".replace(".", ",")
+                                    preco_kg_calc_str = f"{preco_kg_calc:.4f}".replace(".", ",")
+                                    
                                     # Colunas: DATA_HORA, COD_FORN, FORNECEDOR, PRODUTO, PRECO_PACOTE, UNIDADE, PESO_EMBALAGEM, QTD_MASTER, PRECO_KG_EQUIV, PRECO_CAIXA_MASTER
                                     aba_cotacao.append_row([
                                         ts_agora, 
                                         "FORN_01", 
                                         fornecedor_logado, 
                                         row["Produto"], 
-                                        preco_pacote, 
+                                        preco_pacote_str, 
                                         "PCT/CX", 
-                                        peso, 
+                                        peso_str, 
                                         1, 
-                                        preco_kg_calc, 
-                                        preco_pacote
+                                        preco_kg_calc_str, 
+                                        preco_pacote_str
                                     ])
                             st.success("✅ Proposta submetida com sucesso! O departamento de compras já recebeu os teus valores.")
                             st.balloons()

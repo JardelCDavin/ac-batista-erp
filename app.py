@@ -38,7 +38,7 @@ def buscar_dados_aba_cache(nome_aba):
             return client.worksheet(nome_aba).get_all_records()
         except gspread.exceptions.APIError as e:
             if e.response.status_code == 429:
-                st.warning("⏳ O Google está sincronizando os dados. Aguarde alguns segundos...")
+                st.warning("⏳ O Google está a sincronizar os dados. Aguarda alguns segundos...")
             return []
         except Exception:
             return []
@@ -81,7 +81,7 @@ try:
 except gspread.exceptions.APIError as e:
     client = None
     if e.response.status_code == 429:
-        st.error("⏳ Limite de acessos rápidos do Google atingido. Por favor, aguarde 1 minuto e recarregue a página.")
+        st.error("⏳ Limite de acessos rápidos do Google atingido. Por favor, aguarda 1 minuto e recarrega a página.")
         st.stop()
 except Exception as global_e:
     st.error(f"Erro ao conectar com o Google Sheets: {global_e}")
@@ -227,18 +227,15 @@ def carregar_proteinas_semanal():
     except Exception: pass
     return []
 
-# --- NOVA INTELIGÊNCIA: NORMALIZADOR DE NOMES (IGNORA PREPOSIÇÕES, ESTADO, EMBALAGEM E ACENTOS) ---
+# --- NOVA INTELIGÊNCIA: NORMALIZADOR DE NOMES (IGNORA ESTADO E EMBALAGEM E ACENTOS) ---
 def normalizar_nome_produto(nome):
     n = str(nome).upper().strip()
     n = unicodedata.normalize('NFKD', n).encode('ASCII', 'ignore').decode('utf-8')
-    
     for prep in [" DE ", " DA ", " DO ", " COM "]:
         n = n.replace(prep, " ")
-        
     remover = [" CONGELADO", " CONGELADA", " RESFRIADO", " RESFRIADA", " IN NATURA", " KG", " KGS", " UNID", " UN"]
     for r in remover:
         n = n.replace(r, "")
-        
     return " ".join(n.split()).strip()
 
 # --- CONFIGURAÇÃO DA PÁGINA ---
@@ -261,9 +258,9 @@ def validar_usuario_sheets(usuario, senha):
                             'FILIAL': str(linha.get('FILIAL', '')).strip().upper(),
                             'NIVEL': str(linha.get('NIVEL', '')).strip().upper() 
                         }, None
-                    else: return None, "❌ Senha incorreta. Tente novamente."
+                    else: return None, "❌ Palavra-passe incorreta. Tenta novamente."
     except Exception as e: return None, f"❌ Erro crítico ao conectar à base de dados: {e}"
-    return None, "❌ Usuário não localizado."
+    return None, "❌ Utilizador não localizado."
 
 # =========================================================================
 # 🛑 TELA DE LOGIN ISOLADA
@@ -274,10 +271,10 @@ if not st.session_state.get('logado', False):
     with container_login.container():
         st.markdown("""<style>[data-test-id="stSidebar"] { display: none !important; } .stMainBlockContainer { max-width: 500px; margin: 0 auto; padding-top: 5rem; }</style>""", unsafe_allow_html=True)
         st.title("🔒 Login - AC Batista ERP")
-        usuario = st.text_input("Usuário", key="txt_usuario_final")
-        senha = st.text_input("Senha", type="password", key="txt_senha_final")
+        usuario = st.text_input("Utilizador", key="txt_usuario_final")
+        senha = st.text_input("Palavra-passe", type="password", key="txt_senha_final")
 
-        if st.button("Acessar o Sistema"):
+        if st.button("Aceder ao Sistema"):
             registro, erro = validar_usuario_sheets(usuario, senha)
             if erro: st.error(erro)
             else:
@@ -301,7 +298,7 @@ if not st.session_state.get('logado', False):
 
 st.markdown("""<style>.stButton>button { background-color: #004A99; color: white; width: 100%; border-radius: 5px; height: 3em; font-weight: bold; } .stButton>button:hover { background-color: #003366; color: white; }</style>""", unsafe_allow_html=True)
 
-# --- CONTROLE DE ACESSO OTIMIZADO E DEFINITIVO ---
+# --- CONTROLO DE ACESSO OTIMIZADO E DEFINITIVO ---
 @st.cache_data(ttl=60)
 def ler_status_digitacao():
     try:
@@ -469,7 +466,7 @@ def consolidar_proteina_semanal_geral(restaurante_filtro="Todos"):
     df_final = pd.DataFrame(df_linhas)
     df_editado = st.data_editor(df_final, use_container_width=True, hide_index=True, disabled=["Filial", "Proteína / Item", "Status", "Justificativa da Nutricionista"])
 
-    if st.button("💾 Salvar Correção da Filial", type="primary"):
+    if st.button("💾 Guardar Correção da Filial", type="primary"):
         try:
             aba_aud = client.worksheet("AUDITORIA_CONSOLIDADA")
             d_sheets = aba_aud.get_all_records()
@@ -480,7 +477,7 @@ def consolidar_proteina_semanal_geral(restaurante_filtro="Todos"):
                     if str(r_s.get("RESTAURANTE", "")).strip().upper() == f_v and str(r_s.get("PRODUTO", "")).strip().upper() == p_v:
                         if "PEDIDO_NUTRICIONISTA" in cab_upper: aba_aud.update_cell(idx_s, cab_upper.index("PEDIDO_NUTRICIONISTA") + 1, q_v)
                         if "STATUS_VALIDACAO" in cab_upper: aba_aud.update_cell(idx_s, cab_upper.index("STATUS_VALIDACAO") + 1, "APROVADO")
-            st.success("✅ Salvo com sucesso!")
+            st.success("✅ Guardado com sucesso!")
             st.cache_data.clear(); time_lib.sleep(1); st.rerun()
         except Exception as e: st.error(f"Erro: {e}")
 
@@ -489,7 +486,7 @@ def modulo_cotacao_consolidacao():
     st.markdown("## ⚙ Painel de Distribuição de Suprimentos") 
     st.info("Espaço destinado ao gerenciamento logístico de insumos e fechamento de cargas do Diretor Jardel.") 
     
-    with st.expander("⏱️ Controle de Prazo e Acompanhamento de Fornecedores", expanded=True):
+    with st.expander("⏱️ Controlo de Prazo e Acompanhamento de Fornecedores", expanded=True):
         col_p1, col_p2, col_p3 = st.columns(3)
         with col_p1: data_limite = st.date_input("Data Limite de Cotação", value=date.today(), key="dt_limite_diretor")
         with col_p2: hora_limite = st.time_input("Horário Limite", value=time_mod(9, 0, 0), key="hr_limite_diretor")
@@ -511,12 +508,12 @@ def modulo_cotacao_consolidacao():
             for forn in todos_forn:
                 nome_curto = encurtar_nome_fornecedor(forn)
                 if str(forn).strip().upper() in fornecedores_que_enviaram:
-                    status_lista.append({"Fornecedor": nome_curto, "Status": "🟢 Finalizado / Enviado", "Detalhes": "Proposta registrada"})
+                    status_lista.append({"Fornecedor": nome_curto, "Status": "🟢 Finalizado / Enviado", "Detalhes": "Proposta registada"})
                 else:
-                    status_lista.append({"Fornecedor": nome_curto, "Status": "🔴 Pendente", "Detalhes": "Aguardando envio"})
+                    status_lista.append({"Fornecedor": nome_curto, "Status": "🔴 Pendente", "Detalhes": "A aguardar envio"})
             st.dataframe(pd.DataFrame(status_lista), use_container_width=True, hide_index=True)
         except Exception as e_st:
-            st.caption(f"ℹ️ Aguardando dados para exibir o status: {e_st}")
+            st.caption(f"ℹ️ A aguardar dados para exibir o status: {e_st}")
 
     st.markdown("---")
 
@@ -683,7 +680,7 @@ def modulo_cotacao_consolidacao():
         # ==========================================
         with aba_conferencia:
             st.markdown("### 📑 Espelho de Pedidos e Carrinho de Revisão")
-            st.caption("Revise o pedido, ajuste quantidades ou fornecedores, e baixe o espelho oficial em PDF com o prazo de entrega calculado automaticamente.")
+            st.caption("Revê o pedido, ajusta quantidades ou fornecedores, e baixa o espelho oficial em PDF com o prazo de entrega calculado automaticamente.")
             
             try:
                 dados_aud = buscar_dados_aba_cache("AUDITORIA_CONSOLIDADA")
@@ -716,7 +713,7 @@ def modulo_cotacao_consolidacao():
 
                         if not df_aprov_conf.empty and "RESTAURANTE" in df_aprov_conf.columns:
                             lista_filiais_disponiveis = sorted(df_aprov_conf["RESTAURANTE"].dropna().astype(str).str.strip().unique().tolist())
-                            filial_selecionada_aba3 = st.selectbox("🏢 Escolha a Filial para emitir os Pedidos:", lista_filiais_disponiveis, key="sb_filial_conferencia_aba3")
+                            filial_selecionada_aba3 = st.selectbox("🏢 Escolhe a Filial para emitir os Pedidos:", lista_filiais_disponiveis, key="sb_filial_conferencia_aba3")
                             
                             if filial_selecionada_aba3:
                                 df_itens_filial = df_aprov_conf[df_aprov_conf["RESTAURANTE"].astype(str).str.strip().str.upper() == filial_selecionada_aba3.upper()].copy()
@@ -857,12 +854,12 @@ def modulo_cotacao_consolidacao():
                                                                 str_prev_entrega,
                                                                 ""
                                                             ])
-                                                        st.success(f"✅ Pedido Nº {num_seq:04d} disparado e registrado com sucesso na aba PEDIDOS_ABERTOS!")
+                                                        st.success(f"✅ Pedido Nº {num_seq:04d} disparado e registado com sucesso na aba PEDIDOS_ABERTOS!")
                                                         st.cache_data.clear()
                                                     except Exception as erro_aberto:
-                                                        st.error(f"Erro ao salvar na base de pedidos abertos: {erro_aberto}")
+                                                        st.error(f"Erro ao guardar na base de pedidos abertos: {erro_aberto}")
                         else: st.info("ℹ️ Nenhum pedido aprovado encontrado.")
-                    else: st.info("ℹ️ Realize a cotação na Aba 2 primeiro.")
+                    else: st.info("ℹ️ Realiza a cotação na Aba 2 primeiro.")
             except Exception as e_conf:
                 st.error(f"Erro ao montar a conferência: {e_conf}")
 
@@ -871,7 +868,7 @@ def modulo_cotacao_consolidacao():
         # ==========================================
         with aba_relatorio:
             st.markdown("### 📈 Relatório Gerencial de Divergências (Acareação)")
-            st.caption("Acompanhe o histórico de notas baixadas e analise faltas, sobras e variações de preços.")
+            st.caption("Acompanha o histórico de notas baixadas e analisa faltas, sobras e variações de preços.")
             try:
                 dados_hist_rel = buscar_dados_aba_cache("HISTORICO_PEDIDOS")
                 if dados_hist_rel:
@@ -891,16 +888,16 @@ def modulo_cotacao_consolidacao():
 def interface_lancamento_proteina_filial(filial_passada="CENTRO"):
     try:
         st.subheader("📋 Digitação Semanal por Filial")
-        st.info("Use as abas abaixo para lançar novos itens ou gerenciar o lote.")
+        st.info("Usa as abas abaixo para lançar novos itens ou gerenciar o lote.")
         
         nivel_usuario = st.session_state.get('nivel', 'Comum')
         filial_do_login = st.session_state.get('filial_nome', 'TEJUCO')
         
         if nivel_usuario == "Admin":
-            filial_selected = st.selectbox("🏢 Selecione a Filial:", MOCK_FILIAIS, index=MOCK_FILIAIS.index(filial_do_login) if filial_do_login in MOCK_FILIAIS else 0)
+            filial_selected = st.selectbox("🏢 Seleciona a Filial:", MOCK_FILIAIS, index=MOCK_FILIAIS.index(filial_do_login) if filial_do_login in MOCK_FILIAIS else 0)
         else:
             filial_selected = filial_do_login
-            st.info(f"📍 **Sua Filial Ativa:** {filial_selected}")
+            st.info(f"📍 **A tua Filial Ativa:** {filial_selected}")
             
         if not filial_selected: return
         
@@ -916,9 +913,9 @@ def interface_lancamento_proteina_filial(filial_passada="CENTRO"):
                 if not proteinas_lista: 
                     st.warning("Nenhuma proteína localizada.")
                 else:
-                    produto_selecionado = st.selectbox("Selecione a Proteína:", [""] + proteinas_lista, format_func=lambda x: "-- Selecione --" if x == "" else x)
+                    produto_selecionado = st.selectbox("Seleciona a Proteína:", [""] + proteinas_lista, format_func=lambda x: "-- Seleciona --" if x == "" else x)
                     if not produto_selecionado: 
-                        st.warning("👆 Escolha uma proteína acima para fazer um novo lançamento.")
+                        st.warning("👆 Escolhe uma proteína acima para fazer um novo lançamento.")
                     else:
                         st.write(f"**Selecionada:** {produto_selecionado}")
                         
@@ -977,7 +974,7 @@ def interface_lancamento_proteina_filial(filial_passada="CENTRO"):
                         status_v, jst, block = "DENTRO DO LIMITE", "", False
                         
                         if pedido_input <= 0.0:
-                            st.error("❌ Não pode enviar pedido zerado.")
+                            st.error("❌ Não podes enviar pedido zerado.")
                             block = True
                         elif pedido_input > pedido_sugerido:
                             status_v = "⚠ EXCEÇÃO (ESTOURADO)"
@@ -994,10 +991,10 @@ def interface_lancamento_proteina_filial(filial_passada="CENTRO"):
                                     
                                     status_atual = str(linha_trava.get("STATUS_VALIDACAO", "")).strip().upper()
                                     if "CONCLUÍDO" in status_atual or "APROVADO" in status_atual:
-                                        st.error(f"⚠️ Bloqueio: Você já enviou o pedido de {produto_selecionado} ({st.session_state['semana_atual']}) para o Diretor neste ciclo! Se precisar de mais, entre em contato com a Diretoria.")
+                                        st.error(f"⚠️ Bloqueio: Já enviaste o pedido de {produto_selecionado} ({st.session_state['semana_atual']}) para o Diretor neste ciclo! Se precisares de mais, entra em contacto com a Diretoria.")
                                         block = True; break
                                     elif status_atual in ["DENTRO DO LIMITE", "⚠ EXCEÇÃO (ESTOURADO)", ""]:
-                                        st.error(f"⚠️ Atenção: O item {produto_selecionado} já está no seu carrinho na Aba 2 (Conferência) aguardando envio. Vá até lá se precisar alterar a quantidade.")
+                                        st.error(f"⚠️ Atenção: O item {produto_selecionado} já está no teu carrinho na Aba 2 (Conferência) a aguardar envio. Vai até lá se precisares alterar a quantidade.")
                                         block = True; break
                         
                         if st.button("➕ ADICIONAR À CONFERÊNCIA (VAI PARA ABA 2)", disabled=block, key="btn_grv"):
@@ -1007,7 +1004,7 @@ def interface_lancamento_proteina_filial(filial_passada="CENTRO"):
                                     str(dt_mod.now().strftime('%d/%m/%Y %H:%M:%S')), filial_selected, produto_selecionado, 
                                     st.session_state['semana_atual'], float(stock_input), float(pedido_input), round(pedido_sugerido, 2), status_v, jst
                                 ])
-                                st.success("✔️ Adicionado! Vá para a Aba 2 para Conferir e Enviar ao Diretor.")
+                                st.success("✔️ Adicionado! Vai para a Aba 2 para Conferir e Enviar ao Diretor.")
                                 st.cache_data.clear()
                                 time_lib.sleep(1)
                                 st.rerun()
@@ -1054,7 +1051,7 @@ def interface_lancamento_proteina_filial(filial_passada="CENTRO"):
                             df_ed = st.data_editor(df_ex, column_config=cfg, hide_index=True, use_container_width=True, key=f"ed_lote_{filial_limpa}")
                             
                             if st.button("🚀 CONFIRMAR E ENVIAR PARA O DIRETOR", type="primary", use_container_width=True):
-                                with st.spinner("⏳ Enviando para a mesa do Diretor e limpando a conferência..."):
+                                with st.spinner("⏳ A enviar para a mesa do Diretor e a limpar a conferência..."):
                                     aba_auditoria = client.worksheet("AUDITORIA_CONSOLIDADA")
                                     lista_linhas_sheets = aba_auditoria.get_all_values()
                                     
@@ -1093,8 +1090,8 @@ def interface_lancamento_proteina_filial(filial_passada="CENTRO"):
                                     time_lib.sleep(1)
                                     st.rerun()
                         else: st.caption(f"ℹ️ Nenhum pedido pendente de envio na filial {filial_selected}.")
-                    else: st.caption("ℹ️ A planilha não possui as colunas necessárias ainda.")
-                else: st.caption("ℹ️ A planilha de auditoria está vazia.")
+                    else: st.caption("ℹ️ A folha de cálculo não possui as colunas necessárias ainda.")
+                else: st.caption("ℹ️ A folha de cálculo de auditoria está vazia.")
             except Exception as e_conf:
                 st.error(f"Erro ao processar lote: {e_conf}")
     except Exception as erro_modulo_compras: 
@@ -1105,7 +1102,7 @@ def interface_lancamento_proteina_filial(filial_passada="CENTRO"):
 # =========================================================================
 def modulo_compras_suprimentos():
     st.title("💼 Compras & Suprimentos - Gestão de Pedidos")
-    st.info("Gerencie pedidos ativos, altere status (ATIVO/FINALIZADO) ou realize digitação manual de novos itens com múltiplas linhas.")
+    st.info("Gere pedidos ativos, altera status (ATIVO/FINALIZADO) ou realiza digitação manual de novos itens com múltiplas linhas.")
 
     tab_gerenciar, tab_manual = st.tabs(["📦 1. Pedidos Ativos & Gestão", "➕ 2. Digitação Manual (Múltiplos Itens)"])
 
@@ -1119,7 +1116,7 @@ def modulo_compras_suprimentos():
                 dados_abertos = []
 
             if not dados_abertos:
-                st.warning("⚠️ Nenhum pedido encontrado na aba PEDIDOS_ABERTOS do Google Sheets. Gere pedidos na Aba 3 ou insira na Digitação Manual.")
+                st.warning("⚠️ Nenhum pedido encontrado na aba PEDIDOS_ABERTOS do Google Sheets. Gera pedidos na Aba 3 ou insere na Digitação Manual.")
             else:
                 df_abertos = pd.DataFrame(dados_abertos)
                 df_abertos.columns = [str(c).strip().upper() for c in df_abertos.columns]
@@ -1134,7 +1131,7 @@ def modulo_compras_suprimentos():
                     st.info("ℹ️ Nenhum pedido ativo no momento.")
                 else:
                     st.markdown("##### ✏️ Edição, Exclusão, Inclusão de NF e Baixa de Pedidos")
-                    st.caption("Digite o número da Nota Fiscal (NF), altere status para FINALIZADO ou ajuste quantidades diretamente na tabela abaixo.")
+                    st.caption("Digita o número da Nota Fiscal (NF), altera o status para FINALIZADO ou ajusta quantidades diretamente na tabela abaixo.")
                     
                     df_editado_abertos = st.data_editor(
                         df_exibicao,
@@ -1143,7 +1140,7 @@ def modulo_compras_suprimentos():
                         key="editor_pedidos_abertos_geral_v2"
                     )
 
-                    if st.button("💾 Salvar Alterações e Baixar Pedidos Finalizados", type="primary", key="btn_salvar_abertos_v2"):
+                    if st.button("💾 Guardar Alterações e Baixar Pedidos Finalizados", type="primary", key="btn_salvar_abertos_v2"):
                         try:
                             ws_ab = client.worksheet("PEDIDOS_ABERTOS")
                             try:
@@ -1187,18 +1184,18 @@ def modulo_compras_suprimentos():
                             for l_ativa in linhas_ainda_ativas:
                                 ws_ab.append_row(l_ativa)
 
-                            st.success("✅ Alterações salvas! Pedidos finalizados foram arquivados com sucesso em HISTORICO_PEDIDOS.")
+                            st.success("✅ Alterações guardadas! Pedidos finalizados foram arquivados com sucesso em HISTORICO_PEDIDOS.")
                             st.cache_data.clear()
                             time_lib.sleep(1)
                             st.rerun()
                         except Exception as err_save:
-                            st.error(f"❌ Erro ao salvar alterações: {err_save}")
+                            st.error(f"❌ Erro ao guardar alterações: {err_save}")
         except Exception as e_ger:
             st.error(f"Erro ao carregar pedidos abertos: {e_ger}")
 
     with tab_manual:
         st.markdown("##### ➕ Digitação Manual de Pedido Avulso com Múltiplos Itens")
-        st.caption("Insira vários itens de uma vez. O número do pedido é calculado automaticamente de forma sequencial.")
+        st.caption("Insere vários itens de uma vez. O número do pedido é calculado automaticamente de forma sequencial.")
 
         proximo_num_seq = "0001"
         try:
@@ -1242,8 +1239,8 @@ def modulo_compras_suprimentos():
             m_prev = st.date_input("Previsão de Entrega (Editável):", value=data_sugerida_manual, key="m_prev", format="DD/MM/YYYY")
 
         st.markdown("---")
-        st.markdown("##### 🛒 Adicione os Produtos do Pedido (Até 25 Linhas)")
-        st.caption("Digite o código interno ou selecione o produto. O preço unitário será sugerido automaticamente com base no PREÇO BASE da tabela e pode ser editado.")
+        st.markdown("##### 🛒 Adiciona os Produtos do Pedido (Até 25 Linhas)")
+        st.caption("Digita o código interno ou seleciona o produto. O preço unitário será sugerido automaticamente com base no PREÇO BASE da tabela e pode ser editado.")
 
         cod_para_prod, prod_para_cod, lista_nomes_prod, precos_base_map = carregar_catalogo_produtos_mapeamento()
 
@@ -1296,7 +1293,7 @@ def modulo_compras_suprimentos():
                         })
 
                 if not linhas_validas_gravar:
-                    st.warning("⚠️ Preencha pelo menos um item válido com código/produto e quantidade maior que zero.")
+                    st.warning("⚠️ Preenche pelo menos um item válido com código/produto e quantidade maior que zero.")
                 else:
                     try:
                         ws_ab = client.worksheet("PEDIDOS_ABERTOS")
@@ -1339,7 +1336,7 @@ def modulo_entrada_xml():
 
     if "xml_uploader_key" not in st.session_state: st.session_state["xml_uploader_key"] = 0
 
-    arquivo_xml = st.file_uploader("Selecione o arquivo XML da Nota Fiscal Eletrônica", type=["xml"], key=f"xml_up_{st.session_state['xml_uploader_key']}")
+    arquivo_xml = st.file_uploader("Seleciona o arquivo XML da Nota Fiscal Eletrônica", type=["xml"], key=f"xml_up_{st.session_state['xml_uploader_key']}")
 
     if arquivo_xml is not None:
         try:
@@ -1418,28 +1415,28 @@ def modulo_entrada_xml():
 
             if pendencias > 0:
                 st.dataframe(df_itens[["Cód Fornecedor", "Descrição NF", "NCM", "Qtd", "Status", "Produto Interno"]], use_container_width=True, hide_index=True)
-                st.warning(f"⚠️ {pendencias} item(ns) novo(s). Ensine o sistema associando os produtos abaixo:")
+                st.warning(f"⚠️ {pendencias} item(ns) novo(s). Ensina o sistema associando os produtos abaixo:")
                 for _, row in df_itens[df_itens["Status"] == "🔴 Pendente de Mapeamento"].iterrows():
                     with st.container(border=True):
                         st.write(f"**{row['Cód Fornecedor']} - {row['Descrição NF']}**")
                         c1, c2 = st.columns([3, 1])
-                        with c1: p_esc = st.selectbox("Produto Interno:", ["-- Selecione --"] + lista_nomes, key=f"s_{row['Seq']}")
+                        with c1: p_esc = st.selectbox("Produto Interno:", ["-- Seleciona --"] + lista_nomes, key=f"s_{row['Seq']}")
                         with c2:
                             st.write(""); st.write("")
                             if st.button("Salvar Mapeamento", key=f"b_{row['Seq']}", use_container_width=True):
-                                if p_esc != "-- Selecione --":
+                                if p_esc != "-- Seleciona --":
                                     c_int = prod_para_cod.get(p_esc, "")
                                     client.worksheet("DE_PARA_FORNECEDORES").append_row([f"'{c_int}", p_esc, f"'{cnpj_limpo}", nome_emit, f"'{row['Cód Fornecedor']}"])
                                     st.success("Mapeamento salvo!"); st.cache_data.clear(); time_lib.sleep(1); st.rerun()
             else:
-                st.success("✨ Todos os itens mapeados! Confirme o Fator de Conversão e confira a prévia abaixo.")
+                st.success("✨ Todos os itens mapeados! Confirma o Fator de Conversão e confere a prévia abaixo.")
                 
                 # --- 1. FATOR DA NOTA FISCAL COM PRÉVIA EM TEMPO REAL ---
                 df_fator = df_itens[["Seq", "Cód Fornecedor", "Descrição NF", "Produto Interno", "Qtd", "Custo Total Real"]].copy()
                 df_fator["Fator de Conversão"] = 1.0 
                 
                 st.markdown("#### 1️⃣ Fator de Conversão DA NOTA FISCAL")
-                st.caption("Ajuste o fator se necessário e acompanhe a prévia de conversão do estoque em tempo real.")
+                st.caption("Ajusta o fator se necessário e acompanha a prévia de conversão do estoque em tempo real.")
                 
                 df_fator_editado = st.data_editor(
                     df_fator,
@@ -1479,7 +1476,7 @@ def modulo_entrada_xml():
                 # --- 2. CHECK-IN DE NOTAS COM SELEÇÃO INTELIGENTE POR FILIAL E TABELA ---
                 st.markdown("#### 2️⃣ Check-in de Notas (Conciliação com Pedido)")
                 
-                filial_checkin = st.selectbox("🏢 Selecione a Filial de Destino:", MOCK_FILIAIS, key="sb_filial_checkin_xml")
+                filial_checkin = st.selectbox("🏢 Seleciona a Filial de Destino:", MOCK_FILIAIS, key="sb_filial_checkin_xml")
                 
                 dados_abertos = buscar_dados_aba_cache("PEDIDOS_ABERTOS")
                 df_abertos = pd.DataFrame(dados_abertos) if dados_abertos else pd.DataFrame()
@@ -1494,7 +1491,7 @@ def modulo_entrada_xml():
                     
                     if not df_ativos_filial.empty:
                         st.markdown(f"##### 📋 Pedidos Ativos na Filial: {filial_checkin}")
-                        st.caption("Selecione o pedido correspondente na caixa de seleção à esquerda:")
+                        st.caption("Seleciona o pedido correspondente na caixa de seleção à esquerda:")
                         
                         resumo_pedidos = df_ativos_filial.groupby(["PEDIDO_NUM", "FORNECEDOR"]).agg({
                             "QUANTIDADE": "sum",
@@ -1646,14 +1643,14 @@ def modulo_recebimento_fisico():
     filial_do_login = st.session_state.get('filial_nome', 'TEJUCO')
 
     if nivel_usuario == "Admin":
-        filial_selected = st.selectbox("🏢 Selecione a Filial para Recebimento:", MOCK_FILIAIS, index=MOCK_FILIAIS.index(filial_do_login) if filial_do_login in MOCK_FILIAIS else 0)
+        filial_selected = st.selectbox("🏢 Seleciona a Filial para Recebimento:", MOCK_FILIAIS, index=MOCK_FILIAIS.index(filial_do_login) if filial_do_login in MOCK_FILIAIS else 0)
     else:
         filial_selected = filial_do_login
         st.info(f"📍 **Filial Ativa:** {filial_selected}")
 
     dados_abertos = buscar_dados_aba_cache("PEDIDOS_ABERTOS")
     if not dados_abertos:
-        st.success("Nenhum pedido em aberto ou nota aguardando conferência no sistema.")
+        st.success("Nenhum pedido em aberto ou nota a aguardar conferência no sistema.")
         return
 
     df_abertos = pd.DataFrame(dados_abertos)
@@ -1675,10 +1672,10 @@ def modulo_recebimento_fisico():
         nfs_disponiveis = []
 
     if not nfs_disponiveis:
-        st.info("As notas faturadas ainda não tiveram seus números vinculados pelo faturamento central.")
+        st.info("As notas faturadas ainda não tiveram os seus números vinculados pelo faturamento central.")
         return
 
-    nf_selecionada = st.selectbox("🚛 Selecione a Nota Fiscal / Carga que está recebendo:", nfs_disponiveis)
+    nf_selecionada = st.selectbox("🚛 Seleciona a Nota Fiscal / Carga que estás a receber:", nfs_disponiveis)
 
     if nf_selecionada:
         df_itens_nf = df_receber[df_receber["NUMERO_NF"].astype(str) == str(nf_selecionada)].copy()
@@ -1726,7 +1723,7 @@ def modulo_recebimento_fisico():
 
         st.write("")
         if st.button("✅ Salvar Conferência e Fechar Recebimento", type="primary"):
-            with st.spinner("Registrando conferência no sistema..."):
+            with st.spinner("A registar conferência no sistema..."):
                 try:
                     ws_conf = client.worksheet("CONFERENCIA_FISICA")
                     ts_agora = dt_mod.now().strftime('%d/%m/%Y %H:%M:%S')
@@ -1764,10 +1761,10 @@ def modulo_recebimento_fisico():
                             if str(row_ab[idx_nf_ab]).strip().replace("'","") == str(nf_selecionada).strip():
                                 ws_ab.update_cell(i_ab + 1, idx_status_ab + 1, f"CONFERIDO (Físico: {ts_agora[:10]})")
 
-                    st.success("✅ Conferência registrada com sucesso!")
+                    st.success("✅ Conferência registada com sucesso!")
 
                     if divergencias_encontradas:
-                        st.warning("⚠️ Atenção! Foram detectadas divergências entre a Nota Fiscal e a Carga Física:")
+                        st.warning("⚠️ Atenção! Foram detetadas divergências entre a Nota Fiscal e a Carga Física:")
                         for div in divergencias_encontradas:
                             st.write(f"- **{div[0]}**: NF dizia {div[1]} | Chegou {div[2]} -> **{div[3]}**")
                         st.info("O Setor de Compras será alertado para tratar com o fornecedor.")
@@ -1784,7 +1781,7 @@ def modulo_recebimento_fisico():
 # =========================================================================
 if client is None: client = conectar_sheets_nativo()
 if st.session_state.get('logado', False):
-    st.sidebar.write(f"👤 Usuário: **{st.session_state.get('usuario', 'Nenhum')}**")
+    st.sidebar.write(f"👤 Utilizador: **{st.session_state.get('usuario', 'Nenhum')}**")
     st.sidebar.write(f"🔑 Acesso: **{st.session_state.get('nivel', 'Comum')}**")
     if st.sidebar.button("🚪 Sair/Logoff"): st.session_state.logado = False; st.rerun()
 
@@ -1806,7 +1803,7 @@ elif modulo_selecionado == "📦 Almoxarifado / Portaria": modulo_recebimento_fi
 elif modulo_selecionado == "🔍 Conferência e Consolidação" or "Conferência" in str(modulo_selecionado): 
     st.title("🔍 Conferência e Consolidação de Pedidos")
     with st.container(border=True):
-        st.markdown("### 🔒 Controle de Acesso (Cotação)")
+        st.markdown("### 🔒 Controlo de Acesso (Cotação)")
         
         status_atual = ler_status_digitacao()
         
@@ -1833,7 +1830,7 @@ elif modulo_selecionado == "🔍 Conferência e Consolidação" or "Conferência
                             st.cache_data.clear()
                             st.rerun()
             except Exception as e:
-                st.error(f"⚠️ O Google bloqueou a ação temporariamente por segurança (limite de velocidade). Aguarde 1 minuto e tente novamente! Erro técnico: {e}")
+                st.error(f"⚠️ O Google bloqueou a ação temporariamente por segurança (limite de velocidade). Aguarda 1 minuto e tenta novamente! Erro técnico: {e}")
             
     restaurante_filtrado = st.selectbox("Filtrar por Restaurante:", ["Todos"] + MOCK_FILIAIS) 
     tab_sem, tab_men = st.tabs(["Pedido Semanal", "Pedido Mensal"]) 
@@ -1847,7 +1844,83 @@ elif modulo_selecionado == "🥗 Lançamento de Pedidos" or "Lançamento" in str
 elif modulo_selecionado == "🤝 Portal de Cotação": 
     st.title("🤝 Portal do Fornecedor")
     fornecedor_logado = st.session_state.get('filial_nome', 'FORNECEDOR PADRÃO')
-    st.success(f"Empresa: {fornecedor_logado}") 
+    st.success(f"🏢 Empresa Logada: {fornecedor_logado}") 
+    st.markdown("---")
+    st.markdown("### 📝 Digitação de Preços (Lote Aberto)")
+    st.info("Preenche o valor do pacote e o peso da embalagem. O sistema calculará o preço por KG automaticamente para a concorrência.")
+    
+    try:
+        dados_auditoria_brutos = buscar_dados_aba_cache("AUDITORIA_CONSOLIDADA") 
+        if not dados_auditoria_brutos:
+            st.warning("Nenhum lote de cotação aberto no momento.")
+        else:
+            df_aud = pd.DataFrame(dados_auditoria_brutos) 
+            df_aud.columns = [str(c).strip().upper() for c in df_aud.columns] 
+            df_aprov = df_aud[df_aud["STATUS_VALIDACAO"] == "APROVADO"] if "STATUS_VALIDACAO" in df_aud.columns else df_aud 
+
+            if df_aprov.empty:
+                st.success("🎉 Nenhuma cotação pendente no momento. Fica atento às próximas aberturas!")
+            else:
+                produtos_unicos = sorted(df_aprov["PRODUTO"].dropna().unique().tolist())
+                
+                linhas_cotacao = []
+                for prod in produtos_unicos:
+                    linhas_cotacao.append({
+                        "Produto": prod,
+                        "Preço Pacote/Caixa (R$)": 0.0,
+                        "Peso Embalagem (KG)": 1.0,
+                        "Temos em Estoque?": True
+                    })
+                    
+                df_cot = pd.DataFrame(linhas_cotacao)
+                
+                df_editado_forn = st.data_editor(
+                    df_cot,
+                    column_config={
+                        "Produto": st.column_config.TextColumn(disabled=True),
+                        "Preço Pacote/Caixa (R$)": st.column_config.NumberColumn(min_value=0.0, format="R$ %.2f"),
+                        "Peso Embalagem (KG)": st.column_config.NumberColumn(min_value=0.01, format="%.3f"),
+                        "Temos em Estoque?": st.column_config.CheckboxColumn(default=True)
+                    },
+                    hide_index=True,
+                    use_container_width=True,
+                    key="editor_fornecedor_precos"
+                )
+                
+                st.write("")
+                if st.button("🚀 Enviar Proposta Oficial", type="primary", use_container_width=True):
+                    with st.spinner("A enviar proposta encriptada..."):
+                        try:
+                            aba_cotacao = client.worksheet("BD_COTACAO")
+                            ts_agora = dt_mod.now().strftime('%d/%m/%Y %H:%M:%S')
+                            
+                            for _, row in df_editado_forn.iterrows():
+                                preco_pacote = float(row["Preço Pacote/Caixa (R$)"])
+                                if preco_pacote > 0 and row["Temos em Estoque?"]:
+                                    peso = float(row["Peso Embalagem (KG)"])
+                                    preco_kg_calc = round(preco_pacote / peso, 4)
+                                    
+                                    # Colunas: DATA_HORA, COD_FORN, FORNECEDOR, PRODUTO, PRECO_PACOTE, UNIDADE, PESO_EMBALAGEM, QTD_MASTER, PRECO_KG_EQUIV, PRECO_CAIXA_MASTER
+                                    aba_cotacao.append_row([
+                                        ts_agora, 
+                                        "FORN_01", 
+                                        fornecedor_logado, 
+                                        row["Produto"], 
+                                        preco_pacote, 
+                                        "PCT/CX", 
+                                        peso, 
+                                        1, 
+                                        preco_kg_calc, 
+                                        preco_pacote
+                                    ])
+                            st.success("✅ Proposta submetida com sucesso! O departamento de compras já recebeu os teus valores.")
+                            st.balloons()
+                            time_lib.sleep(2)
+                            st.rerun()
+                        except Exception as e_envio:
+                            st.error(f"Erro ao enviar: {e_envio}")
+    except Exception as e_geral:
+        st.error(f"Erro interno no portal do fornecedor: {e_geral}")
 
 elif modulo_selecionado == "📊 Cotação & Consolidação":
     modulo_cotacao_consolidacao()
@@ -1867,7 +1940,7 @@ elif modulo_selecionado == "🍳 Fichas Técnicas (Cardápio)":
                 df_editado = st.data_editor(df_auditoria, hide_index=True, use_container_width=True)
                 if st.button("🚀 Processar Pedidos Selecionados", type="primary", use_container_width=True):
                     df_selecionados = df_editado[df_editado["APROVAR"] == True]
-                    if df_selecionados.empty: st.warning("Selecione um pedido para aprovação.")
+                    if df_selecionados.empty: st.warning("Seleciona um pedido para aprovação.")
                     else: st.success("Pedidos validados com sucesso!"); st.cache_data.clear(); st.rerun()
         except Exception as e: st.error(f"Erro ao carregar o painel: {e}")
     else: st.error("🔒 Acesso restrito ao Administrador.")

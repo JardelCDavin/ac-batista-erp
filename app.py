@@ -291,7 +291,7 @@ if not st.session_state.get('logado', False):
 
 st.markdown("""<style>.stButton>button { background-color: #004A99; color: white; width: 100%; border-radius: 5px; height: 3em; font-weight: bold; } .stButton>button:hover { background-color: #003366; color: white; }</style>""", unsafe_allow_html=True)
 
-# --- CONTROLE DE ACESSO OTIMIZADO (SEM TRAVAR O GOOGLE E COM RADAR) ---
+# --- CONTROLE DE ACESSO OTIMIZADO E DEFINITIVO ---
 @st.cache_data(ttl=60)
 def ler_status_digitacao():
     try:
@@ -299,11 +299,10 @@ def ler_status_digitacao():
         if cli:
             aba = cli.worksheet("CONFIGURACOES")
             dados = aba.get_all_values()
-            if dados:
-                for linha in dados:
-                    for cel in linha:
-                        if str(cel).strip().upper() == "LIGADO": return True
-                        elif str(cel).strip().upper() == "DESLIGADO": return False
+            for linha in dados:
+                # Procura exatamente a palavra STATUS_DIGITACAO na primeira coluna
+                if len(linha) > 1 and str(linha[0]).strip().upper() == "STATUS_DIGITACAO":
+                    return True if str(linha[1]).strip().upper() == "LIGADO" else False
     except Exception as e:
         print(f"Erro ao ler status: {e}")
     return False
@@ -314,16 +313,21 @@ def salvar_governanca(ligado):
         aba = cli.worksheet("CONFIGURACOES")
         novo_valor = "LIGADO" if ligado else "DESLIGADO"
         dados = aba.get_all_values()
-        lin_alvo, col_alvo = 2, 2
         
+        lin_alvo = -1
         if dados:
             for i, linha in enumerate(dados):
-                for j, cel in enumerate(linha):
-                    if str(cel).strip().upper() in ["LIGADO", "DESLIGADO"]:
-                        lin_alvo, col_alvo = i + 1, j + 1
-                        break
-                        
-        aba.update_cell(lin_alvo, col_alvo, novo_valor)
+                if len(linha) > 0 and str(linha[0]).strip().upper() == "STATUS_DIGITACAO":
+                    lin_alvo = i + 1
+                    break
+        
+        if lin_alvo != -1:
+            # Atualiza a coluna B (2) exatamente na linha onde achou a chave
+            aba.update_cell(lin_alvo, 2, novo_valor)
+        else:
+            # Se a linha não existir na aba CONFIGURACOES, ele recria automaticamente
+            aba.append_row(["STATUS_DIGITACAO", novo_valor])
+            
         st.session_state['libera_digitacao_semanal'] = ligado
 
 
@@ -1829,7 +1833,7 @@ elif modulo_selecionado == "🔍 Conferência e Consolidação" or "Conferência
                             st.cache_data.clear()
                             st.rerun()
             except Exception as e:
-                st.error(f"⚠️ O Google bloqueou a ação temporariamente por segurança (limite de velocidade). Aguarda 1 minuto e tenta novamente! Erro: {e}")
+                st.error(f"⚠️ O Google bloqueou a ação temporariamente por segurança (limite de velocidade). Aguarda 1 minuto e tenta novamente! Erro técnico: {e}")
             
     restaurante_filtrado = st.selectbox("Filtrar por Restaurante:", ["Todos"] + MOCK_FILIAIS) 
     tab_sem, tab_men = st.tabs(["Pedido Semanal", "Pedido Mensal"]) 

@@ -17,15 +17,12 @@ from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer, Table, Tabl
 # --- CONEXÃO INTELIGENTE COM O GOOGLE SHEETS (CORREÇÃO STREAMLIT CLOUD) ---
 @st.cache_resource
 def inicializar_gspread():
-    # 1. Se estiver rodando na nuvem (Streamlit Cloud), usa a memória!
     if 'gcp_service_account' in st.secrets:
         credenciais = dict(st.secrets['gcp_service_account'])
-        # Vacina contra erro de RSA: garante que as quebras de linha sejam lidas corretamente
         if 'private_key' in credenciais:
             credenciais['private_key'] = credenciais['private_key'].replace('\\n', '\n')
         return gspread.service_account_from_dict(credenciais)
     
-    # 2. Se estiver rodando no seu computador (VS Code), usa o arquivo físico local
     caminho_local = os.path.join(os.path.dirname(os.path.abspath(__file__)), "chave.json")
     if os.path.exists(caminho_local):
         return gspread.service_account(filename=caminho_local)
@@ -75,7 +72,6 @@ try:
         ws_c = client.add_worksheet(title="CONFERENCIA_FISICA", rows="2000", cols="12")
         ws_c.append_row(["DATA_HORA", "FILIAL", "NUMERO_NF", "FORNECEDOR", "PRODUTO", "QTD_XML", "QTD_REAL", "DIVERGENCIA", "LOTE", "VALIDADE", "TEMPERATURA", "CONFERENTE"])
     
-    # NOVA ABA: CONFIGURACOES PARA A NUVEM (LIGA/DESLIGA O SISTEMA)
     if "CONFIGURACOES" not in abas_existentes:
         ws_conf = client.add_worksheet(title="CONFIGURACOES", rows="10", cols="2")
         ws_conf.append_row(["CHAVE", "VALOR"])
@@ -219,7 +215,6 @@ def carregar_dados_filiais_dict():
 # --- CONFIGURAÇÕES E CONSTANTES GERAIS ---
 MOCK_FILIAIS = ["TEJUCO", "CENTRO", "MATOSINHOS", "RM SABOR", "COLONIA", "BARBACENA", "LEOPOLDINA"]
 
-# SOLUÇÃO DEFINITIVA DO PROBLEMA DE PRODUTOS "NÃO LOCALIZADOS"
 @st.cache_data(ttl=600)
 def carregar_proteinas_semanal():
     try:
@@ -230,6 +225,16 @@ def carregar_proteinas_semanal():
                 return sorted(df['PRODUTO'].dropna().astype(str).str.strip().unique().tolist())
     except Exception: pass
     return []
+
+# --- NOVA INTELIGÊNCIA: NORMALIZADOR DE NOMES (IGNORA ESTADO E EMBALAGEM) ---
+def normalizar_nome_produto(nome):
+    """Limpa palavras de estado do produto para garantir que 'SASSAMI CONGELADO' ache 'SASSAMI KG' nos cálculos do contrato."""
+    n = str(nome).upper().strip()
+    # Adicionamos espaço antes de cada palavra para não cortar pedaços de outras palavras
+    remover = [" CONGELADO", " CONGELADA", " RESFRIADO", " RESFRIADA", " IN NATURA", " KG", " KGS", " UNID", " UN"]
+    for r in remover:
+        n = n.replace(r, "")
+    return n.strip()
 
 # --- CONFIGURAÇÃO DA PÁGINA ---
 st.set_page_config(page_title="Portal AC Batista", layout="wide")
@@ -300,7 +305,6 @@ def ler_status_digitacao():
             aba = cli.worksheet("CONFIGURACOES")
             dados = aba.get_all_values()
             for linha in dados:
-                # Procura exatamente a palavra STATUS_DIGITACAO na primeira coluna
                 if len(linha) > 1 and str(linha[0]).strip().upper() == "STATUS_DIGITACAO":
                     return True if str(linha[1]).strip().upper() == "LIGADO" else False
     except Exception as e:
@@ -322,14 +326,11 @@ def salvar_governanca(ligado):
                     break
         
         if lin_alvo != -1:
-            # Atualiza a coluna B (2) exatamente na linha onde achou a chave
             aba.update_cell(lin_alvo, 2, novo_valor)
         else:
-            # Se a linha não existir na aba CONFIGURACOES, ele recria automaticamente
             aba.append_row(["STATUS_DIGITACAO", novo_valor])
             
         st.session_state['libera_digitacao_semanal'] = ligado
-
 
 def encurtar_nome_fornecedor(nome_completo):
     n = str(nome_completo).strip().upper()
@@ -432,7 +433,6 @@ def gerar_pdf_pedido(num_pedido, filial_nome, dados_filial, forn_alvo, telefone_
     buffer.seek(0)
     return buffer.getvalue()
 
-
 # =========================================================================
 # FUNÇÕES CORE (COMPRAS, SUPRIMENTOS E COTAÇÃO E ENTRADA XML)
 # =========================================================================
@@ -478,7 +478,6 @@ def consolidar_proteina_semanal_geral(restaurante_filtro="Todos"):
             st.success("✅ Salvo com sucesso!")
             st.cache_data.clear(); time_lib.sleep(1); st.rerun()
         except Exception as e: st.error(f"Erro: {e}")
-
 
 def modulo_cotacao_consolidacao(): 
     st.title("📊 Cotação & Consolidação") 
@@ -903,7 +902,6 @@ def interface_lancamento_proteina_filial(filial_passada="CENTRO"):
         tab_lancamento, tab_conferencia = st.tabs(["📌 Aba 1: Lançamento", "🔍 Aba 2: Conferência"])
         
         with tab_lancamento:
-            # AGORA ELE LÊ DIRETO DA NUVEM SE ESTÁ LIGADO
             status_liberado = ler_status_digitacao() 
             
             if st.session_state.get('nivel') != "Admin" and not status_liberado:
@@ -946,7 +944,9 @@ def interface_lancamento_proteina_filial(filial_passada="CENTRO"):
                                 if filial_limpa in ["DONA MARIA", "RM SABOR"]:
                                     dados_contrato = buscar_dados_aba_cache("CONTRATO_DONA_MARIA")
                                     for tc in dados_contrato:
-                                        if str(tc.get('DESCRIÇÃO', '')).strip().upper() == str(produto_selecionado).strip().upper():
+                                        prod_plan = normalizar_nome_produto(tc.get('DESCRIÇÃO', ''))
+                                        prod_sel = normalizar_nome_produto(produto_selecionado)
+                                        if prod_sel == prod_plan or prod_sel in prod_plan or prod_plan in prod_sel:
                                             teto_f = float(str(tc.get('Limite Ativo', 0.0)).replace(',', '.'))
                                             ml = str(tc.get('MARGEM_SEGURANÇA', '0.0')).replace(',', '.').replace('%', '')
                                             if ml.strip(): margem_seguranca = float(ml) / 100.0 if float(ml) > 1.0 else float(ml)
@@ -956,9 +956,9 @@ def interface_lancamento_proteina_filial(filial_passada="CENTRO"):
                                     nome_aba = "CONTRATO_LEOPOLDINA" if filial_limpa == "LEOPOLDINA" else "CONTRATO_POPULAR_GERAL"
                                     dados_contrato = buscar_dados_aba_cache(nome_aba)
                                     for lc in dados_contrato:
-                                        prod_plan = str(lc.get('PRODUTO', '')).strip().upper()
-                                        prod_sel = str(produto_selecionado).strip().upper()
-                                        if prod_sel in prod_plan or prod_plan in prod_sel:
+                                        prod_plan = normalizar_nome_produto(lc.get('PRODUTO', ''))
+                                        prod_sel = normalizar_nome_produto(produto_selecionado)
+                                        if prod_sel == prod_plan or prod_sel in prod_plan or prod_plan in prod_sel:
                                             fator_per_capita = float(str(lc.get('PESO_IN_NATURA_GR_PADRAO', '0.165')).replace(',', '.'))
                                             ml = str(lc.get('MARGEM_SEGURANCA', '0.0')).replace(',', '.').replace('%', '')
                                             if ml.strip(): 
@@ -1654,7 +1654,6 @@ def modulo_recebimento_fisico():
     df_abertos = pd.DataFrame(dados_abertos)
     df_abertos.columns = [str(c).strip().upper() for c in df_abertos.columns]
 
-    # Filtra pedidos que tem a NF preenchida (RECEBIDO via XML) e que pertencem à filial logada, descartando os já CONFERIDOS fisicamente
     df_receber = df_abertos[
         (df_abertos["FILIAL"].astype(str).str.strip().str.upper() == str(filial_selected).upper()) &
         (df_abertos["STATUS"].astype(str).str.upper().str.contains("RECEBIDO", na=False)) &
@@ -1665,7 +1664,6 @@ def modulo_recebimento_fisico():
         st.success("🎉 Nenhuma mercadoria ou Nota Fiscal pendente de conferência física para esta filial no momento.")
         return
 
-    # Agrupar por NF para o conferente selecionar qual caminhão encostou
     if "NUMERO_NF" in df_receber.columns:
         nfs_disponiveis = [str(nf) for nf in df_receber["NUMERO_NF"].dropna().unique().tolist() if str(nf).strip()]
     else:
@@ -1683,7 +1681,6 @@ def modulo_recebimento_fisico():
 
         st.markdown(f"### 📋 Conferência da Carga - NF: **{nf_selecionada}** ({fornecedor_nf})")
 
-        # DETECTOR DE PERECÍVEIS (INTELIGÊNCIA PARA TEMPERATURA)
         def exige_temperatura(nome_produto):
             palavras_chave = ['CARNE', 'FRANGO', 'SUÍNO', 'PEIXE', 'SALSICHA', 'LINGUIÇA', 'QUEIJO', 'PRESUNTO', 'CONGELAD', 'RESFRIAD', 'POLPA', 'IOGURTE', 'MANTEIGA', 'MISTURA LÁCTEA', 'REQUEIJÃO', 'SASSAMI', 'COXA', 'BIFE', 'MOÍDA']
             return any(p in str(nome_produto).upper() for p in palavras_chave)
@@ -1711,7 +1708,7 @@ def modulo_recebimento_fisico():
             "Qtd Real que Chegou": st.column_config.NumberColumn("Qtd Recebida Físico", min_value=0.0, step=0.1, required=True),
             "Lote": st.column_config.TextColumn("Lote", required=False),
             "Validade (DD/MM/AAAA)": st.column_config.TextColumn("Validade", required=False),
-            "Temperatura ºC": st.column_config.TextColumn("Temp. ºC", required=False) # TextColumn permite manter o aviso "Não se aplica"
+            "Temperatura ºC": st.column_config.TextColumn("Temp. ºC", required=False) 
         }
 
         df_editado = st.data_editor(
@@ -1751,7 +1748,6 @@ def modulo_recebimento_fisico():
                             prod, qtd_xml, qtd_real, status_div, lote, validade, temp, conferente
                         ])
 
-                    # 2. Atualizar status na PEDIDOS_ABERTOS para CONFERIDO
                     ws_ab = client.worksheet("PEDIDOS_ABERTOS")
                     grid_ab = ws_ab.get_all_values()
                     cab_ab = [str(c).strip().upper() for c in grid_ab[0]] if grid_ab else []
@@ -1812,7 +1808,6 @@ elif modulo_selecionado == "🔍 Conferência e Consolidação" or "Conferência
         col_status, col_acao = st.columns([1, 1])
         
         with col_status:
-            # Indicador visual fixo em Verde ou Vermelho
             if status_atual:
                 st.markdown("""<div style='background-color:#28a745; color:white; text-align:center; padding:10px; border-radius:5px; font-weight:bold; font-size:16px;'>🟢 COTAÇÃO LIBERADA</div>""", unsafe_allow_html=True)
             else:

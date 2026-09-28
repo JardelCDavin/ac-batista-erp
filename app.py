@@ -291,39 +291,27 @@ if not st.session_state.get('logado', False):
 
 st.markdown("""<style>.stButton>button { background-color: #004A99; color: white; width: 100%; border-radius: 5px; height: 3em; font-weight: bold; } .stButton>button:hover { background-color: #003366; color: white; }</style>""", unsafe_allow_html=True)
 
-# --- BOTÃO LIGA/DESLIGA 100% NUVEM (CORRIGIDO PARA ROBUSTEZ) ---
+# --- CONTROLE DE ACESSO OTIMIZADO (SEM TRAVAR O GOOGLE) ---
+@st.cache_data(ttl=60)
 def ler_status_digitacao():
     try:
         if 'client' in globals() and client is not None:
             aba = client.worksheet("CONFIGURACOES")
-            dados = aba.get_all_records()
-            if dados:
-                for linha in dados:
-                    if str(linha.get("CHAVE", "")).strip().upper() == "STATUS_DIGITACAO":
-                        return True if str(linha.get("VALOR", "")).strip().upper() == "LIGADO" else False
-    except Exception as e:
-        print(f"Erro ao ler status: {e}")
-    return False
+            # Lê diretamente apenas a célula B2 em vez de carregar a folha toda
+            val = aba.cell(2, 2).value 
+            return True if str(val).strip().upper() == "LIGADO" else False
+    except Exception:
+        return False
 
 def salvar_governanca(ligado):
     try:
         if 'client' in globals() and client is not None:
             aba = client.worksheet("CONFIGURACOES")
             novo_valor = "LIGADO" if ligado else "DESLIGADO"
-            
-            # Encontra a linha correta para atualizar para evitar quebrar formatação
-            dados = aba.get_all_records()
-            linha_atualizar = 2 
-            if dados:
-                 for i, linha in enumerate(dados):
-                     if str(linha.get("CHAVE", "")).strip().upper() == "STATUS_DIGITACAO":
-                         linha_atualizar = i + 2 
-                         break
-            
-            aba.update_cell(linha_atualizar, 2, novo_valor)
+            # Grava diretamente na célula B2 (1 única chamada à API)
+            aba.update_cell(2, 2, novo_valor)
             st.session_state['libera_digitacao_semanal'] = ligado
-    except Exception as e: 
-        print(f"Erro ao salvar status: {e}")
+    except Exception: 
         pass
 
 def encurtar_nome_fornecedor(nome_completo):
@@ -1800,13 +1788,31 @@ elif modulo_selecionado == "📦 Almoxarifado / Portaria": modulo_recebimento_fi
 elif modulo_selecionado == "🔍 Conferência e Consolidação" or "Conferência" in str(modulo_selecionado): 
     st.title("🔍 Conferência e Consolidação de Pedidos")
     with st.container(border=True):
-        st.markdown("### 🔒 Controle de Acesso")
+        st.markdown("### 🔒 Controle de Acesso (Cotação)")
+        
         status_atual = ler_status_digitacao()
-        trava = st.toggle("Permitir digitação das nutricionistas", value=status_atual)
-        if trava != status_atual:
-            salvar_governanca(trava)
-            st.cache_data.clear()
-            st.rerun()
+        
+        col_status, col_acao = st.columns([1, 1])
+        
+        with col_status:
+            # Indicador visual fixo em Verde ou Vermelho
+            if status_atual:
+                st.markdown("""<div style='background-color:#28a745; color:white; text-align:center; padding:10px; border-radius:5px; font-weight:bold; font-size:16px;'>🟢 COTAÇÃO LIBERADA</div>""", unsafe_allow_html=True)
+            else:
+                st.markdown("""<div style='background-color:#dc3545; color:white; text-align:center; padding:10px; border-radius:5px; font-weight:bold; font-size:16px;'>🔴 COTAÇÃO BLOQUEADA</div>""", unsafe_allow_html=True)
+        
+        with col_acao:
+            # Botões separados para ação direta
+            if status_atual:
+                if st.button("Bloquear Cotação", use_container_width=True):
+                    salvar_governanca(False)
+                    st.cache_data.clear()
+                    st.rerun()
+            else:
+                if st.button("Liberar Cotação", use_container_width=True):
+                    salvar_governanca(True)
+                    st.cache_data.clear()
+                    st.rerun()
             
     restaurante_filtrado = st.selectbox("Filtrar por Restaurante:", ["Todos"] + MOCK_FILIAIS) 
     tab_sem, tab_men = st.tabs(["Pedido Semanal", "Pedido Mensal"]) 

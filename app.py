@@ -1802,17 +1802,19 @@ elif modulo_selecionado == "🔍 Conferência e Consolidação" or "Conferência
                 st.markdown("""<div style='background-color:#dc3545; color:white; text-align:center; padding:10px; border-radius:5px; font-weight:bold; font-size:16px;'>🔴 COTAÇÃO BLOQUEADA</div>""", unsafe_allow_html=True)
         
         with col_acao:
-            # Botões separados para ação direta
-            if status_atual:
-                if st.button("Bloquear Cotação", use_container_width=True):
-                    salvar_governanca(False)
-                    st.cache_data.clear()
-                    st.rerun()
-            else:
-                if st.button("Liberar Cotação", use_container_width=True):
-                    salvar_governanca(True)
-                    st.cache_data.clear()
-                    st.rerun()
+            try:
+                if status_atual:
+                    if st.button("Bloquear Cotação", use_container_width=True, key="btn_bloq"):
+                        client.worksheet("CONFIGURACOES").update_cell(2, 2, "DESLIGADO")
+                        st.cache_data.clear()
+                        st.rerun()
+                else:
+                    if st.button("Liberar Cotação", use_container_width=True, key="btn_lib"):
+                        client.worksheet("CONFIGURACOES").update_cell(2, 2, "LIGADO")
+                        st.cache_data.clear()
+                        st.rerun()
+            except Exception as e:
+                st.error(f"⚠️ O Google bloqueou a ação por segurança. Aguarde 60 segundos e tente novamente. Detalhe do erro: {e}")
             
     restaurante_filtrado = st.selectbox("Filtrar por Restaurante:", ["Todos"] + MOCK_FILIAIS) 
     tab_sem, tab_men = st.tabs(["Pedido Semanal", "Pedido Mensal"]) 

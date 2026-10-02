@@ -256,51 +256,19 @@ def validar_usuario_sheets(usuario, senha):
     return None, "❌ Utilizador não localizado."
 
 # =========================================================================
-# 🛑 NOVO LAYOUT DE LOGIN: MODERNO, ELEGANTE E CENTRALIZADO (USUÁRIO / SENHA / ACESSAR)
+# 🛑 TELA DE LOGIN ISOLADA (ESTÁVEL PARA TELEMÓVEL E PC)
 # =========================================================================
 container_login = st.empty()
 
 if not st.session_state.get('logado', False):
     with container_login.container():
-        st.markdown("""
-            <style>
-                [data-test-id="stSidebar"] { display: none !important; }
-                .stMainBlockContainer { 
-                    max-width: 450px; 
-                    margin: 0 auto; 
-                    padding-top: 4rem; 
-                }
-                .login-card {
-                    background: #ffffff;
-                    padding: 2.5rem 2rem;
-                    border-radius: 12px;
-                    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.08);
-                    border: 1px solid #eaeaea;
-                }
-                .login-title {
-                    color: #004A99;
-                    font-weight: 700;
-                    text-align: center;
-                    margin-bottom: 0.2rem;
-                    font-size: 1.8rem;
-                }
-                .login-subtitle {
-                    color: #666666;
-                    text-align: center;
-                    margin-bottom: 2rem;
-                    font-size: 0.95rem;
-                }
-            </style>
-        """, unsafe_allow_html=True)
-        
-        st.markdown("<h1 class='login-title'>🔒 AC Batista ERP</h1>", unsafe_allow_html=True)
-        st.markdown("<p class='login-subtitle'>Portal de Gestão e Suprimentos</p>", unsafe_allow_html=True)
+        st.markdown("""<style>[data-test-id="stSidebar"] { display: none !important; } .stMainBlockContainer { max-width: 500px; margin: 0 auto; padding-top: 5rem; }</style>""", unsafe_allow_html=True)
+        st.title("🔒 Login - AC Batista ERP")
         
         with st.form("form_login_ac_batista"):
-            usuario = st.text_input("Usuário", key="txt_usuario_final", placeholder="Digite o seu usuário")
-            senha = st.text_input("Senha", type="password", key="txt_senha_final", placeholder="Digite a sua senha")
+            usuario = st.text_input("Usuário", key="txt_usuario_final")
+            senha = st.text_input("Senha", type="password", key="txt_senha_final")
             
-            st.markdown("<div style='margin-top: 1rem;'></div>", unsafe_allow_html=True)
             botao_submeter = st.form_submit_button("Acessar", use_container_width=True)
 
             if botao_submeter:
@@ -329,7 +297,7 @@ if not st.session_state.get('logado', False):
                         st.cache_data.clear()
                         st.rerun()
 
-st.markdown("""<style>.stButton>button { background-color: #004A99; color: white; width: 100%; border-radius: 6px; height: 3.2em; font-weight: bold; font-size: 1rem; border: none; } .stButton>button:hover { background-color: #003366; color: white; }</style>""", unsafe_allow_html=True)
+st.markdown("""<style>.stButton>button { background-color: #004A99; color: white; width: 100%; border-radius: 5px; height: 3em; font-weight: bold; } .stButton>button:hover { background-color: #003366; color: white; }</style>""", unsafe_allow_html=True)
 
 @st.cache_data(ttl=60)
 def ler_status_digitacao():
@@ -637,7 +605,7 @@ def modulo_cotacao_consolidacao():
         
         with aba_precos: 
             st.markdown("### 📊 Mesa de Decisão Comercial - Diretor Jardel")
-            st.caption("O sistema calcula automaticamente o preço por KG equivalente (suportando decimais como 0,5 ou 2,5) e destaca o menor preço.")
+            st.caption("O sistema calcula automaticamente o preço por KG equivalente e destaca em verde o menor preço de cada produto.")
 
             if "PRECO_KG_EQUIV" in df_bruto.columns and "FORNECEDOR" in df_bruto.columns:
                 df_bruto["FORNECEDOR_CURTO"] = df_bruto["FORNECEDOR"].apply(encurtar_nome_fornecedor)
@@ -724,11 +692,11 @@ def modulo_cotacao_consolidacao():
                     except Exception as e_automacao: st.error(f"Erro ao processar o arquivamento: {e_automacao}")
 
         # ==========================================
-        # ABA 3: CONFERÊNCIA & DISPARO (COM PREÇO UNITÁRIO EDITÁVEL E TOTAL DO PEDIDO)
+        # ABA 3: CONFERÊNCIA & DISPARO (COM ALTERAÇÃO DINÂMICA DE FORNECEDOR E PREÇO)
         # ==========================================
         with aba_conferencia:
             st.markdown("### 📑 Espelho de Pedidos e Carrinho de Revisão")
-            st.caption("Revê o pedido, ajusta quantidades ou fornecedores, edita o preço unitário se necessário, e gera o espelho oficial em PDF.")
+            st.caption("Revê o pedido, altera o fornecedor de destino se necessário (o preço atualiza automaticamente), e gera o espelho oficial em PDF.")
             
             try:
                 dados_aud = buscar_dados_aba_cache("AUDITORIA_CONSOLIDADA")
@@ -792,7 +760,6 @@ def modulo_cotacao_consolidacao():
                                         "Excluir?": False,
                                         "Produto": produto_nome,
                                         "Qtd Solicitada (KG)": float(qtd_nutri_original),
-                                        "Preço Unitário (R$)": float(preco_sugerido_unit),
                                         "Fornecedor Destino": vencedor_aba2
                                     })
 
@@ -803,7 +770,6 @@ def modulo_cotacao_consolidacao():
                                         "Excluir?": st.column_config.CheckboxColumn("Remover", default=False),
                                         "Produto": st.column_config.TextColumn("Descrição do Produto", disabled=True),
                                         "Qtd Solicitada (KG)": st.column_config.NumberColumn("Qtd (KG)", min_value=0.0, step=0.5, format="%.2f"),
-                                        "Preço Unitário (R$)": st.column_config.NumberColumn("Preço Unit. (R$)", min_value=0.0, step=0.01, format="R$ %.2f"),
                                         "Fornecedor Destino": st.column_config.SelectboxColumn("Fornecedor Destino", options=forn_lista, required=True)
                                     },
                                     hide_index=True,
@@ -811,8 +777,26 @@ def modulo_cotacao_consolidacao():
                                     key=f"carrinho_edit_livre_{filial_selecionada_aba3}"
                                 )
 
-                                # Cálculo automático do preço total por linha e do carrinho
-                                df_carrinho_editado["Preço Total (R$)"] = df_carrinho_editado["Qtd Solicitada (KG)"] * df_carrinho_editado["Preço Unitário (R$)"]
+                                # Inteligência de atualização de preço baseada no fornecedor selecionado na tabela
+                                precos_atualizados = []
+                                totais_atualizados = []
+                                for _, r_c in df_carrinho_editado.iterrows():
+                                    p_nome = r_c["Produto"]
+                                    f_dest = r_c["Fornecedor Destino"]
+                                    q_val = tratar_qtd_float(r_c["Qtd Solicitada (KG)"])
+                                    
+                                    p_unit = 0.0
+                                    l_dec = df_dec[df_dec["PRODUTO"] == p_nome]
+                                    if not l_dec.empty and f_dest in l_dec.columns:
+                                        val_f = l_dec.iloc[0][f_dest]
+                                        p_unit = float(val_f) if pd.notna(val_f) else 0.0
+                                    
+                                    precos_atualizados.append(p_unit)
+                                    totais_atualizados.append(round(q_val * p_unit, 2))
+
+                                df_carrinho_editado["Preço Unit. (R$)"] = precos_atualizados
+                                df_carrinho_editado["Preço Total (R$)"] = totais_atualizados
+                                
                                 valor_total_geral_carrinho = df_carrinho_editado[df_carrinho_editado["Excluir?"] == False]["Preço Total (R$)"].sum()
 
                                 st.markdown(f"### 💰 **Valor Total do Carrinho: R$ {valor_total_geral_carrinho:,.2f}**")
@@ -837,7 +821,7 @@ def modulo_cotacao_consolidacao():
                                             for _, row_item in df_f_pedidos.iterrows():
                                                 p_nome = row_item["Produto"]
                                                 p_qtd = tratar_qtd_float(row_item["Qtd Solicitada (KG)"])
-                                                preco_u = float(row_item["Preço Unitário (R$)"])
+                                                preco_u = float(row_item["Preço Unit. (R$)"])
                                                 
                                                 linhas_espelho.append({
                                                     "Código": "0545",

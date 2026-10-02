@@ -15,7 +15,7 @@ from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
 from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
 import unicodedata
 
-# --- CONEXÃO INTELIGENTE COM O GOOGLE SHEETS (CORREÇÃO STREAMLIT CLOUD) ---
+# --- CONEXÃO INTELIGENTE COM O GOOGLE SHEETS (BLINDAGEM CONTRA TRAVAMENTOS) ---
 @st.cache_resource
 def inicializar_gspread():
     if 'gcp_service_account' in st.secrets:
@@ -30,15 +30,15 @@ def inicializar_gspread():
         
     raise ValueError("Nenhuma credencial do Google encontrada. Verifique o Streamlit Secrets ou o arquivo chave.json.")
 
-# --- BLINDAGEM DE API: MEMÓRIA DE CURTO PRAZO ---
-@st.cache_data(ttl=120)
+# --- BLINDAGEM DE API: MEMÓRIA DE CURTO PRAZO AMPLIADA (EVITA ERRO 429 DO GOOGLE) ---
+@st.cache_data(ttl=300)
 def buscar_dados_aba_cache(nome_aba):
     if 'client' in globals() and client is not None:
         try:
             return client.worksheet(nome_aba).get_all_records()
         except gspread.exceptions.APIError as e:
             if e.response.status_code == 429:
-                st.warning("⏳ O Google está a sincronizar os dados. Aguarda alguns segundos...")
+                st.warning("⏳ O Google está a proteger os acessos (Limite 429). A aguardar cache local...")
             return []
         except Exception:
             return []
@@ -80,12 +80,8 @@ try:
 
 except gspread.exceptions.APIError as e:
     client = None
-    if e.response.status_code == 429:
-        st.error("⏳ Limite de acessos rápidos do Google atingido. Por favor, aguarda 1 minuto e recarrega a página.")
-        st.stop()
 except Exception as global_e:
-    st.error(f"Erro ao conectar com o Google Sheets: {global_e}")
-    st.stop()
+    client = None
 
 def conectar_sheets_nativo():
     return client
@@ -149,7 +145,7 @@ def carregar_catalogo_produtos_mapeamento():
         return cod_para_prod, prod_para_cod, sorted(list(set(lista_nomes))), precos_base_map
     except Exception: return {}, {}, ["COXA SOLTEIRA PILÃO KG", "LINGUIÇA SUÍNA CHURRASCO", "SASSAMI KG"], {}
 
-@st.cache_data(ttl=60)
+@st.cache_data(ttl=300)
 def carregar_de_para_fornecedores():
     dados = buscar_dados_aba_cache("DE_PARA_FORNECEDORES")
     mapeamento = {}
@@ -213,7 +209,6 @@ def carregar_dados_filiais_dict():
             }
     return filiais_map
 
-# --- CONFIGURAÇÕES E CONSTANTES GERAIS ---
 MOCK_FILIAIS = ["TEJUCO", "CENTRO", "MATOSINHOS", "RM SABOR", "COLONIA", "BARBACENA", "LEOPOLDINA"]
 
 @st.cache_data(ttl=600)
@@ -227,7 +222,6 @@ def carregar_proteinas_semanal():
     except Exception: pass
     return []
 
-# --- NOVA INTELIGÊNCIA: NORMALIZADOR DE NOMES ---
 def normalizar_nome_produto(nome):
     n = str(nome).upper().strip()
     n = unicodedata.normalize('NFKD', n).encode('ASCII', 'ignore').decode('utf-8')
@@ -238,11 +232,10 @@ def normalizar_nome_produto(nome):
         n = n.replace(r, "")
     return " ".join(n.split()).strip()
 
-# --- CONFIGURAÇÃO DA PÁGINA ---
 st.set_page_config(page_title="Portal AC Batista", layout="wide")
 
 def validar_usuario_sheets(usuario, senha):
-    if not client: return None, "❌ Não foi possível conectar ao Google Sheets."
+    if client is None: return None, "❌ Erro: Não foi possível conectar ao Google Sheets. Verifique as credenciais no Secrets."
     u_in = str(usuario).strip().upper()
     s_in = str(senha).strip()
     try:
@@ -263,7 +256,7 @@ def validar_usuario_sheets(usuario, senha):
     return None, "❌ Utilizador não localizado."
 
 # =========================================================================
-# 🛑 TELA DE LOGIN ISOLADA
+# 🛑 TELA DE LOGIN ISOLADA (ESTÁVEL PARA TELEMÓVEL E PC)
 # =========================================================================
 container_login = st.empty()
 
@@ -271,34 +264,41 @@ if not st.session_state.get('logado', False):
     with container_login.container():
         st.markdown("""<style>[data-test-id="stSidebar"] { display: none !important; } .stMainBlockContainer { max-width: 500px; margin: 0 auto; padding-top: 5rem; }</style>""", unsafe_allow_html=True)
         st.title("🔒 Login - AC Batista ERP")
-        usuario = st.text_input("Utilizador", key="txt_usuario_final")
-        senha = st.text_input("Palavra-passe", type="password", key="txt_senha_final")
+        
+        with st.form("form_login_ac_batista"):
+            usuario = st.text_input("Utilizador", key="txt_usuario_final")
+            senha = st.text_input("Palavra-passe", type="password", key="txt_senha_final")
+            
+            botao_submeter = st.form_submit_button("Aceder ao Sistema", use_container_width=True)
 
-        if st.button("Aceder ao Sistema"):
-            registro, erro = validar_usuario_sheets(usuario, senha)
-            if erro: st.error(erro)
-            else:
-                container_login.empty()
-                st.session_state.logado = True
-                st.session_state.usuario = str(registro.get('USUARIO', '')).strip()
-                nome_empresa = str(registro.get('FILIAL', '')).strip().upper()
-                nivel_detectado = str(registro.get('NIVEL', '')).strip().upper()
-                
-                if nivel_detectado == "FORNECEDOR":
-                    st.session_state.nivel = "Fornecedor"
-                    st.session_state.filial_nome = nome_empresa
-                elif nome_empresa == "ADMINISTRATIVO" or nivel_detectado == "ADMIN":
-                    st.session_state.nivel = "Admin"
-                    st.session_state.filial_nome = "ADMINISTRATIVO"
+            if botao_submeter:
+                if not usuario or not senha:
+                    st.error("⚠️ Por favor, preenche o utilizador e a palavra-passe.")
                 else:
-                    st.session_state.nivel = "Nutricionista"
-                    st.session_state.filial_nome = nome_empresa
-                st.cache_data.clear()
-                st.rerun()
+                    registro, erro = validar_usuario_sheets(usuario, senha)
+                    if erro:
+                        st.error(erro)
+                    else:
+                        container_login.empty()
+                        st.session_state.logado = True
+                        st.session_state.usuario = str(registro.get('USUARIO', '')).strip()
+                        nome_empresa = str(registro.get('FILIAL', '')).strip().upper()
+                        nivel_detectado = str(registro.get('NIVEL', '')).strip().upper()
+                        
+                        if nivel_detectado == "FORNECEDOR":
+                            st.session_state.nivel = "Fornecedor"
+                            st.session_state.filial_nome = nome_empresa
+                        elif nome_empresa == "ADMINISTRATIVO" or nivel_detectado == "ADMIN":
+                            st.session_state.nivel = "Admin"
+                            st.session_state.filial_nome = "ADMINISTRATIVO"
+                        else:
+                            st.session_state.nivel = "Nutricionista"
+                            st.session_state.filial_nome = nome_empresa
+                        st.cache_data.clear()
+                        st.rerun()
 
 st.markdown("""<style>.stButton>button { background-color: #004A99; color: white; width: 100%; border-radius: 5px; height: 3em; font-weight: bold; } .stButton>button:hover { background-color: #003366; color: white; }</style>""", unsafe_allow_html=True)
 
-# --- CONTROLO DE ACESSO OTIMIZADO E DEFINITIVO ---
 @st.cache_data(ttl=60)
 def ler_status_digitacao():
     try:
@@ -341,7 +341,6 @@ def encurtar_nome_fornecedor(nome_completo):
     partes = n.split()
     return partes[0].title() if partes else "Fornecedor"
 
-# --- O TRATADOR DE FLOAT ABSOLUTO E VACINA PARA NUVEM ---
 def tratar_preco_float(valor): 
     try: 
         if isinstance(valor, (int, float)): 
@@ -371,7 +370,6 @@ def tratar_preco_float(valor):
         return num
     except: return 0.0
 
-# --- NORMALIZADOR DE PESO DEDICADO (SUPORTE A FRACIONADOS 0.5 E GRAMAS) ---
 def tratar_peso_float(valor):
     try:
         if isinstance(valor, (int, float)):
@@ -391,7 +389,6 @@ def tratar_peso_float(valor):
         return num
     except: return 1.0
 
-# --- GERADOR DE PDF PROFISSIONAL (REPORTLAB) ---
 def gerar_pdf_pedido(num_pedido, filial_nome, dados_filial, forn_alvo, telefone_forn, prazo_pgto, df_itens, data_entrega):
     buffer = io.BytesIO()
     doc = SimpleDocTemplate(buffer, pagesize=letter, rightMargin=30, leftMargin=30, topMargin=30, bottomMargin=30)
@@ -471,9 +468,6 @@ def gerar_pdf_pedido(num_pedido, filial_nome, dados_filial, forn_alvo, telefone_
     buffer.seek(0)
     return buffer.getvalue()
 
-# =========================================================================
-# FUNÇÕES CORE (COMPRAS, SUPRIMENTOS E COTAÇÃO E ENTRADA XML)
-# =========================================================================
 def consolidar_proteina_semanal_geral(restaurante_filtro="Todos"):
     planilha = conectar_sheets_nativo()
     if not planilha: return
@@ -579,7 +573,6 @@ def modulo_cotacao_consolidacao():
                     df_auditoria_total = pd.DataFrame(dados_auditoria_brutos) 
                     df_auditoria_total.columns = [str(c).strip().upper() for c in df_auditoria_total.columns] 
                     
-                    # CORREÇÃO: Filtra os status válidos enviados pelas nutricionistas (Concluídos, Aprovados, etc.)
                     if "STATUS_VALIDACAO" in df_auditoria_total.columns:
                         df_validos = df_auditoria_total[df_auditoria_total["STATUS_VALIDACAO"].astype(str).str.upper().isin(["APROVADO", "CONCLUÍDO FILIAL", "DENTRO DO LIMITE", "⚠ EXCEÇÃO (ESTOURADO)"])]
                         if df_validos.empty:
@@ -609,7 +602,7 @@ def modulo_cotacao_consolidacao():
 
             if not df_mapa_completo.empty:
                 colunas_fornecedores = [col for col in df_mapa_completo.columns if col != "PRODUTO"]
-                if not colunas_fornecedores: st.info("ℹ️ Nenhum fornecedor enviou propostas até o momento.")
+                if not colunas_fornecedores: st.info("ℹ️️ Nenhum fornecedor enviou propostas até o momento.")
                 else:
                     df_mapa_completo["Menor R$/KG"] = df_mapa_completo[colunas_fornecedores].min(axis=1)
                     df_mapa_completo["Sugestão Sistema"] = df_mapa_completo[colunas_fornecedores].idxmin(axis=1)
@@ -685,9 +678,6 @@ def modulo_cotacao_consolidacao():
                         st.balloons(); st.cache_data.clear(); st.rerun()
                     except Exception as e_automacao: st.error(f"Erro ao processar o arquivamento: {e_automacao}")
 
-        # ==========================================
-        # ABA 3: CONFERÊNCIA & DISPARO (COM DOWNLOAD EM PDF AUTOMATIZADO)
-        # ==========================================
         with aba_conferencia:
             st.markdown("### 📑 Espelho de Pedidos e Carrinho de Revisão")
             st.caption("Revê o pedido, ajusta quantidades ou fornecedores, e baixa o espelho oficial em PDF com o prazo de entrega calculado automaticamente.")
@@ -877,9 +867,6 @@ def modulo_cotacao_consolidacao():
             except Exception as e_conf:
                 st.error(f"Erro ao montar a conferência: {e_conf}")
 
-        # ==========================================
-        # ABA 4: RELATÓRIO DE DIVERGÊNCIAS
-        # ==========================================
         with aba_relatorio:
             st.markdown("### 📈 Relatório Gerencial de Divergências (Acareação)")
             st.caption("Acompanha o histórico de notas baixadas e analisa faltas, sobras e variações de preços.")
@@ -896,9 +883,6 @@ def modulo_cotacao_consolidacao():
     except Exception as erro_modulo_compras: 
         st.error(f"❌ Erro ao processar o painel: {erro_modulo_compras}")
 
-# =========================================================================
-# MÓDULO: LANÇAMENTO DE PEDIDOS (NUTRICIONISTAS)
-# =========================================================================
 def interface_lancamento_proteina_filial(filial_passada="CENTRO"):
     try:
         st.subheader("📋 Digitação Semanal por Filial")
@@ -1113,9 +1097,6 @@ def interface_lancamento_proteina_filial(filial_passada="CENTRO"):
     except Exception as erro_modulo_compras: 
         st.error(f"❌ Erro ao processar: {erro_modulo_compras}")
 
-# =========================================================================
-# MÓDULO: COMPRAS & SUPRIMENTOS (GESTÃO DE PEDIDOS E DIGITAÇÃO MANUAL MÚLTIPLA)
-# =========================================================================
 def modulo_compras_suprimentos():
     st.title("💼 Compras & Suprimentos - Gestão de Pedidos")
     st.info("Gere pedidos ativos, altera status (ATIVO/FINALIZADO) ou realiza digitação manual de novos itens com múltiplas linhas.")
@@ -1309,7 +1290,7 @@ def modulo_compras_suprimentos():
                         })
 
                 if not linhas_validas_gravar:
-                    st.warning("⚠️ Preenche pelo menos um item válido com código/produto e quantidade maior que zero.")
+                    st.warning("⚠️️ Preenche pelo menos um item válido com código/produto e quantidade maior que zero.")
                 else:
                     try:
                         ws_ab = client.worksheet("PEDIDOS_ABERTOS")
@@ -1342,459 +1323,6 @@ def modulo_compras_suprimentos():
             except Exception as err_multi:
                 st.error(f"❌ Erro ao gravar múltiplos itens: {err_multi}")
 
-
-# =========================================================================
-# MÓDULO NOVO: ENTRADA DE XML (NFE) COM SELEÇÃO INTELIGENTE DE PEDIDOS
-# =========================================================================
-def modulo_entrada_xml():
-    st.title("📥 Entrada de NF-e (XML) e Estoque")
-    st.info("O sistema fará o cruzamento contábil e atualizará a Tabela de Preços Mestre automaticamente.")
-
-    if "xml_uploader_key" not in st.session_state: st.session_state["xml_uploader_key"] = 0
-
-    arquivo_xml = st.file_uploader("Seleciona o arquivo XML da Nota Fiscal Eletrônica", type=["xml"], key=f"xml_up_{st.session_state['xml_uploader_key']}")
-
-    if arquivo_xml is not None:
-        try:
-            tree = ET.parse(arquivo_xml)
-            root = tree.getroot()
-            ns = {'nfe': 'http://www.portalfiscal.inf.br/nfe'}
-            
-            infNFe = root.find('.//nfe:infNFe', ns)
-            if infNFe is None: return st.error("XML inválido.")
-
-            num_nf = root.find('.//nfe:ide/nfe:nNF', ns).text
-            emit = root.find('.//nfe:emit', ns)
-            cnpj_emit = emit.find('nfe:CNPJ', ns).text
-            nome_emit = emit.find('nfe:xNome', ns).text
-            cnpj_limpo = cnpj_emit.strip().replace(".", "").replace("/", "").replace("-", "")
-
-            st.write(f"### 📄 Nota Fiscal Nº **{num_nf}** | 🏢 **Fornecedor:** {nome_emit}")
-            
-            # --- VERIFICAÇÃO DE DUPLICIDADE ---
-            dados_hist_val = buscar_dados_aba_cache("HISTORICO_PEDIDOS")
-            nfs_registradas = set(str(linha.get("NUMERO_NF", "")).strip().replace("'", "") for linha in dados_hist_val)
-            
-            if str(num_nf).strip() in nfs_registradas:
-                st.error(f"🛑 ATENÇÃO: A Nota Fiscal Nº {num_nf} já foi processada e encontra-se no Histórico!")
-                st.warning("O sistema bloqueou a entrada para evitar duplicidade de estoque e custos.")
-                if st.button("🔄 Limpar e Carregar Outro XML", type="primary"):
-                    st.session_state["xml_uploader_key"] += 1; st.rerun()
-                return 
-            
-            cod_para_prod, prod_para_cod, lista_nomes, _ = carregar_catalogo_produtos_mapeamento()
-            de_para_map = carregar_de_para_fornecedores()
-
-            itens_nota = []
-            pendencias = 0
-            
-            for det in root.findall('.//nfe:det', ns):
-                prod = det.find('nfe:prod', ns)
-                cProd = prod.find('nfe:cProd', ns).text
-                xProd = prod.find('nfe:xProd', ns).text
-                
-                qCom = float(prod.find('nfe:qCom', ns).text)
-                qTrib_node = prod.find('nfe:qTrib', ns)
-                qTrib = float(qTrib_node.text) if qTrib_node is not None else qCom
-                
-                vUnCom = float(prod.find('nfe:vUnCom', ns).text)
-                vProd = float(prod.find('nfe:vProd', ns).text)
-                ncm = prod.find('nfe:NCM', ns).text if prod.find('nfe:NCM', ns) is not None else ""
-                
-                vST = 0.0
-                icms = det.find('.//nfe:ICMS', ns)
-                if icms is not None:
-                    for child in icms:
-                        vST_tag = child.find('nfe:vICMSST', ns)
-                        if vST_tag is not None: vST = float(vST_tag.text); break
-                        
-                qtd_usada = max(qCom, qTrib)
-                custo_total_real = vProd + vST
-
-                chave = f"{cnpj_limpo}_{cProd.strip()}"
-                status = "🔴 Pendente de Mapeamento"
-                prod_interno = cod_int = ""
-                
-                if chave in de_para_map:
-                    status = "🟢 Encontrado"
-                    prod_interno = de_para_map[chave]["PRODUTO_INTERNO"]
-                    cod_int = de_para_map[chave]["CODIGO_INTERNO"]
-                else: pendencias += 1
-
-                itens_nota.append({
-                    "Seq": det.attrib['nItem'], "Cód Fornecedor": cProd, "Descrição NF": xProd, "NCM": ncm, 
-                    "Qtd": qtd_usada, "ST (R$)": vST, "Custo Total Real": custo_total_real, 
-                    "Status": status, "Produto Interno": prod_interno, "CHAVE": chave
-                })
-
-            df_itens = pd.DataFrame(itens_nota)
-
-            if pendencias > 0:
-                st.dataframe(df_itens[["Cód Fornecedor", "Descrição NF", "NCM", "Qtd", "Status", "Produto Interno"]], use_container_width=True, hide_index=True)
-                st.warning(f"⚠️ {pendencias} item(ns) novo(s). Ensina o sistema associando os produtos abaixo:")
-                for _, row in df_itens[df_itens["Status"] == "🔴 Pendente de Mapeamento"].iterrows():
-                    with st.container(border=True):
-                        st.write(f"**{row['Cód Fornecedor']} - {row['Descrição NF']}**")
-                        c1, c2 = st.columns([3, 1])
-                        with c1: p_esc = st.selectbox("Produto Interno:", ["-- Seleciona --"] + lista_nomes, key=f"s_{row['Seq']}")
-                        with c2:
-                            st.write(""); st.write("")
-                            if st.button("Salvar Mapeamento", key=f"b_{row['Seq']}", use_container_width=True):
-                                if p_esc != "-- Seleciona --":
-                                    c_int = prod_para_cod.get(p_esc, "")
-                                    client.worksheet("DE_PARA_FORNECEDORES").append_row([f"'{c_int}", p_esc, f"'{cnpj_limpo}", nome_emit, f"'{row['Cód Fornecedor']}"])
-                                    st.success("Mapeamento salvo!"); st.cache_data.clear(); time_lib.sleep(1); st.rerun()
-            else:
-                st.success("✨ Todos os itens mapeados! Confirma o Fator de Conversão e confere a prévia abaixo.")
-                
-                # --- 1. FATOR DA NOTA FISCAL COM PRÉVIA EM TEMPO REAL ---
-                df_fator = df_itens[["Seq", "Cód Fornecedor", "Descrição NF", "Produto Interno", "Qtd", "Custo Total Real"]].copy()
-                df_fator["Fator de Conversão"] = "1.0"
-                
-                st.markdown("#### 1️⃣ Fator de Conversão DA NOTA FISCAL")
-                st.caption("Ajusta o fator se necessário e acompanha a prévia de conversão do estoque em tempo real.")
-                
-                df_fator_editado = st.data_editor(
-                    df_fator,
-                    column_config={
-                        "Seq": None, "Cód Fornecedor": st.column_config.TextColumn(disabled=True),
-                        "Descrição NF": st.column_config.TextColumn(disabled=True), "Produto Interno": st.column_config.TextColumn(disabled=True),
-                        "Qtd": st.column_config.NumberColumn("Qtd (Nota)", disabled=True),
-                        "Custo Total Real": st.column_config.NumberColumn("Custo Total (R$)", disabled=True, format="R$ %.2f"),
-                        "Fator de Conversão": st.column_config.TextColumn("Fator (Multiplicador)", required=True)
-                    },
-                    hide_index=True, use_container_width=True, key="editor_fator_conversao"
-                )
-
-                # --- 🪟 ESPELHO DE PRÉVIA EM TEMPO REAL ---
-                st.markdown("##### 🔍 Espelho de Prévia de Entrada no Estoque")
-                previa_linhas = []
-                for _, r_prev in df_fator_editado.iterrows():
-                    r_orig_p = df_itens[df_itens["Seq"] == r_prev["Seq"]].iloc[0]
-                    f_prev = tratar_preco_float(r_prev["Fator de Conversão"])
-                    q_nota_prev = float(r_orig_p["Qtd"])
-                    c_tot_prev = float(r_orig_p["Custo Total Real"])
-                    
-                    qtd_convertida = q_nota_prev * f_prev
-                    custo_unit_calc = c_tot_prev / qtd_convertida if qtd_convertida > 0 else 0.0
-                    
-                    previa_linhas.append({
-                        "Produto": r_prev["Produto Interno"],
-                        "Qtd Final no Estoque": qtd_convertida,
-                        "Custo Unitário Final (R$)": custo_unit_calc
-                    })
-                st.dataframe(pd.DataFrame(previa_linhas), hide_index=True, use_container_width=True, column_config={
-                    "Qtd Final no Estoque": st.column_config.NumberColumn(format="%.2f un/kg"),
-                    "Custo Unitário Final (R$)": st.column_config.NumberColumn(format="R$ %.2f")
-                })
-                st.markdown("---")
-                
-                # --- 2. CHECK-IN DE NOTAS COM SELEÇÃO INTELIGENTE POR FILIAL E TABELA ---
-                st.markdown("#### 2️⃣ Check-in de Notas (Conciliação com Pedido)")
-                
-                filial_checkin = st.selectbox("🏢 Seleciona a Filial de Destino:", MOCK_FILIAIS, key="sb_filial_checkin_xml")
-                
-                dados_abertos = buscar_dados_aba_cache("PEDIDOS_ABERTOS")
-                df_abertos = pd.DataFrame(dados_abertos) if dados_abertos else pd.DataFrame()
-                
-                pedido_selecionado = "Entrada Avulsa (Sem Pedido)"
-                
-                if not df_abertos.empty and all(c in df_abertos.columns for c in ["FILIAL", "STATUS", "PEDIDO_NUM", "FORNECEDOR", "QUANTIDADE", "VALOR_TOTAL"]):
-                    df_ativos_filial = df_abertos[
-                        (df_abertos["FILIAL"].astype(str).str.strip().str.upper() == filial_checkin.upper()) & 
-                        (df_abertos["STATUS"].astype(str).str.upper() == "ATIVO")
-                    ].copy()
-                    
-                    if not df_ativos_filial.empty:
-                        st.markdown(f"##### 📋 Pedidos Ativos na Filial: {filial_checkin}")
-                        st.caption("Seleciona o pedido correspondente na caixa de seleção à esquerda:")
-                        
-                        resumo_pedidos = df_ativos_filial.groupby(["PEDIDO_NUM", "FORNECEDOR"]).agg({
-                            "QUANTIDADE": "sum",
-                            "VALOR_TOTAL": "sum"
-                        }).reset_index()
-                        
-                        resumo_pedidos.insert(0, "Selecionar", False)
-                        resumo_pedidos.columns = ["Selecionar", "Nº Pedido", "Fornecedor", "Qtd Total", "Valor Total (R$)"]
-                        
-                        df_ped_editado = st.data_editor(
-                            resumo_pedidos,
-                            column_config={
-                                "Selecionar": st.column_config.CheckboxColumn("Escolher", default=False),
-                                "Nº Pedido": st.column_config.TextColumn("Nº Pedido", disabled=True),
-                                "Fornecedor": st.column_config.TextColumn("Fornecedor", disabled=True),
-                                "Qtd Total": st.column_config.NumberColumn("Qtd Total", disabled=True, format="%.2f"),
-                                "Valor Total (R$)": st.column_config.NumberColumn("Valor Total", disabled=True, format="R$ %.2f")
-                            },
-                            hide_index=True,
-                            use_container_width=True,
-                            key="tabela_selecao_pedido_xml"
-                        )
-                        
-                        pedidos_escolhidos = df_ped_editado[df_ped_editado["Selecionar"] == True]["Nº Pedido"].tolist()
-                        if pedidos_escolhidos:
-                            pedido_selecionado = str(pedidos_escolhidos[0])
-                            st.info(f"🔗 Pedido Vinculado para Acareação: **Nº {pedido_selecionado}**")
-                        else:
-                            st.info("ℹ️ Nenhum pedido selecionado na tabela. (Será processado como Entrada Avulsa)")
-                    else:
-                        st.info(f"ℹ️ Nenhum pedido ativo encontrado para a filial {filial_checkin}. Será tratada como Entrada Avulsa.")
-                else:
-                    st.info("ℹ️ Nenhum pedido aberto cadastrado no sistema.")
-
-                if pedido_selecionado != "Entrada Avulsa (Sem Pedido)":
-                    df_pedido = df_ativos_filial[df_ativos_filial["PEDIDO_NUM"].astype(str) == pedido_selecionado]
-                    
-                    st.markdown("#### ⚖️ Fator de Conversão DO PEDIDO")
-                    df_pedido_show = df_pedido[["PRODUTO", "QUANTIDADE", "VALOR_TOTAL"]].copy()
-                    df_pedido_show["Fator do Pedido"] = "1.0"
-                    
-                    df_pedido_fator_editado = st.data_editor(
-                        df_pedido_show,
-                        column_config={
-                            "PRODUTO": st.column_config.TextColumn(disabled=True),
-                            "QUANTIDADE": st.column_config.NumberColumn("Qtd Pedido (Original)", disabled=True),
-                            "VALOR_TOTAL": st.column_config.NumberColumn("Valor Total Pedido", disabled=True),
-                            "Fator do Pedido": st.column_config.TextColumn("Fator (Multiplicador)", required=True)
-                        },
-                        hide_index=True, use_container_width=True, key="editor_fator_pedido"
-                    )
-                    
-                    comparacao, produtos_nf = [], []
-                    for _, r_ed in df_fator_editado.iterrows():
-                        prod_nf = r_ed["Produto Interno"]
-                        fator_nf, qtd_nota, custo_tot_nf = tratar_preco_float(r_ed["Fator de Conversão"]), float(df_itens[df_itens["Seq"] == r_ed["Seq"]].iloc[0]["Qtd"]), float(df_itens[df_itens["Seq"] == r_ed["Seq"]].iloc[0]["Custo Total Real"])
-                        qtd_final_nf = qtd_nota * fator_nf
-                        preco_unit_nf = custo_tot_nf / qtd_final_nf if qtd_final_nf > 0 else 0
-                        
-                        item_ped = df_pedido_fator_editado[df_pedido_fator_editado["PRODUTO"].astype(str).str.upper() == prod_nf.upper()]
-                        if not item_ped.empty:
-                            qtd_ped_orig, val_tot_ped, fator_ped = float(item_ped.iloc[0]["QUANTIDADE"]), float(item_ped.iloc[0]["VALOR_TOTAL"]), tratar_preco_float(item_ped.iloc[0]["Fator do Pedido"])
-                            qtd_final_ped = qtd_ped_orig * fator_ped
-                            preco_unit_ped = val_tot_ped / qtd_final_ped if qtd_final_ped > 0 else 0
-                            
-                            diff_qtd, diff_preco = qtd_final_nf - qtd_final_ped, preco_unit_nf - preco_unit_ped
-                            status_qtd = f"📉 Faltou {abs(diff_qtd):.2f}" if diff_qtd < -0.05 else (f"📈 Sobrou {diff_qtd:.2f}" if diff_qtd > 0.05 else "✅ Exato")
-                            status_preco = f"🔴 R$ {diff_preco:.2f} mais caro!" if diff_preco > 0.05 else (f"🟢 R$ {abs(diff_preco):.2f} mais barato" if diff_preco < -0.05 else "✅ Preço Mantido")
-                            
-                            comparacao.append({"Produto": prod_nf, "Qtd NF": qtd_final_nf, "Qtd Pedido": qtd_final_ped, "Status Qtd": status_qtd, "Preço NF (Un)": preco_unit_nf, "Preço Acordado": preco_unit_ped, "Status Preço": status_preco})
-                        else:
-                            comparacao.append({"Produto": prod_nf, "Qtd NF": qtd_final_nf, "Qtd Pedido": 0.0, "Status Qtd": "⚠️ Não estava no pedido", "Preço NF (Un)": preco_unit_nf, "Preço Acordado": 0.0, "Status Preço": "N/A"})
-                        produtos_nf.append(prod_nf.upper())
-                        
-                    for _, r_ped in df_pedido_fator_editado.iterrows():
-                        if str(r_ped["PRODUTO"]).upper() not in produtos_nf:
-                            qtd_final_ped = float(r_ped["QUANTIDADE"]) * tratar_preco_float(r_ped["Fator do Pedido"])
-                            comparacao.append({"Produto": r_ped["PRODUTO"], "Qtd NF": 0.0, "Qtd Pedido": qtd_final_ped, "Status Qtd": "❌ CORTE TOTAL", "Preço NF (Un)": 0.0, "Preço Acordado": 0.0, "Status Preço": "N/A"})
-                            
-                    df_comp = pd.DataFrame(comparacao)
-                    st.markdown("##### 🔎 Resumo do Check-in de Divergências")
-                    def color_rules(row):
-                        if 'Corte' in str(row['Status Qtd']) or 'Não estava' in str(row['Status Qtd']) or 'mais caro' in str(row['Status Preço']):
-                            return ['background-color: #ffcccc; color: #900000; font-weight: bold;'] * len(row)
-                        elif 'Exato' in str(row['Status Qtd']) and 'Mantido' in str(row['Status Preço']):
-                            return ['background-color: #d4edda; color: #155724'] * len(row)
-                        return [''] * len(row)
-                    st.dataframe(df_comp.style.apply(color_rules, axis=1), use_container_width=True, hide_index=True)
-
-                st.write("")
-                if st.button("📥 Realizar Check-in e Dar Baixa (Histórico e Preços)", type="primary"):
-                    with st.spinner("Processando..."):
-                        try:
-                            aba_h, aba_p = client.worksheet("HISTORICO_PEDIDOS"), client.worksheet("PRODUTOS")
-                            grid_p = aba_p.get_all_values()
-                            cab_p = [str(c).strip().upper() for c in grid_p[0]] if grid_p else []
-                            idx_preco = cab_p.index("PREÇO_BASE") + 1 if "PREÇO_BASE" in cab_p else (cab_p.index("PRECO_BASE") + 1 if "PRECO_BASE" in cab_p else 7)
-                            idx_ncm = cab_p.index("NCM") + 1 if "NCM" in cab_p else -1
-                            idx_prod_col = cab_p.index("PRODUTO") if "PRODUTO" in cab_p else 1
-                            
-                            ts, dt_str = dt_mod.now().strftime('%d/%m/%Y %H:%M:%S'), dt_mod.now().strftime('%d/%m/%Y')
-                            
-                            for _, r_ed in df_fator_editado.iterrows():
-                                seq, r_orig = r_ed["Seq"], df_itens[df_itens["Seq"] == r_ed["Seq"]].iloc[0]
-                                fator, qtd_nota, custo_tot = tratar_preco_float(r_ed["Fator de Conversão"]), float(r_orig["Qtd"]), float(r_orig["Custo Total Real"])
-                                qtd_final = qtd_nota * fator
-                                custo_unit_final = custo_tot / qtd_final if qtd_final > 0 else 0.0
-                                ncm_final = str(r_orig["NCM"]).strip()
-                                
-                                aba_h.append_row([ts, dt_str, filial_checkin, pedido_selecionado if pedido_selecionado != "Entrada Avulsa (Sem Pedido)" else "ENTRADA_XML", nome_emit, str(r_orig["Produto Interno"]), f"{qtd_final:.3f}".replace(".", ","), f"{custo_tot:.2f}".replace(".", ","), "BAIXADO (NF-e)", dt_str, f"'{num_nf}", f"'{ncm_final}", "", f"{float(r_orig['ST (R$)']):.2f}".replace(".", ","), f"{custo_unit_final:.4f}".replace(".", ",")])
-                                
-                                prod_int_nome = str(r_orig["Produto Interno"]).strip().upper()
-                                for row_i, row_data in enumerate(grid_p):
-                                    if row_i > 0 and len(row_data) > idx_prod_col and str(row_data[idx_prod_col]).strip().upper() == prod_int_nome:
-                                        aba_p.update_cell(row_i + 1, idx_preco, f"{custo_unit_final:.4f}".replace(".", ","))
-                                        if idx_ncm != -1 and ncm_final and not (len(row_data) > (idx_ncm-1) and str(row_data[idx_ncm-1]).strip()):
-                                            aba_p.update_cell(row_i + 1, idx_ncm, f"'{ncm_final}")
-                                        break
-                                        
-                            if pedido_selecionado != "Entrada Avulsa (Sem Pedido)":
-                                ws_ab = client.worksheet("PEDIDOS_ABERTOS")
-                                grid_ab = ws_ab.get_all_values()
-                                
-                                cab_ab = [str(c).strip().upper() for c in grid_ab[0]] if grid_ab else []
-                                idx_ped_num = cab_ab.index("PEDIDO_NUM") + 1 if "PEDIDO_NUM" in cab_ab else 3
-                                idx_status_ab = cab_ab.index("STATUS") + 1 if "STATUS" in cab_ab else 8
-                                idx_nf_ab = cab_ab.index("NUMERO_NF") + 1 if "NUMERO_NF" in cab_ab else 10
-                                
-                                for i_ab, row_ab in enumerate(grid_ab):
-                                    if i_ab > 0 and len(row_ab) >= idx_ped_num and str(row_ab[idx_ped_num - 1]).strip() == pedido_selecionado:
-                                        linha_plan = i_ab + 1
-                                        ws_ab.update_cell(linha_plan, idx_status_ab, f"RECEBIDO (NF: {num_nf})")
-                                        if idx_nf_ab:
-                                            ws_ab.update_cell(linha_plan, idx_nf_ab, f"'{num_nf}")
-
-                            st.success("✅ Check-in Concluído com Sucesso!"); st.balloons()
-                            st.session_state["xml_uploader_key"] += 1; time_lib.sleep(2.5); st.cache_data.clear(); st.rerun()
-                        except Exception as e: st.error(f"Erro ao processar baixa: {e}")
-        except Exception as e: st.error(f"Erro no XML: {e}")
-
-# =========================================================================
-# MÓDULO NOVO: ALMOXARIFADO / PORTARIA (RECEBIMENTO FÍSICO)
-# =========================================================================
-def modulo_recebimento_fisico():
-    st.title("📦 Recebimento Físico (Portaria / Almoxarifado)")
-    st.info("Tela cega para conferência de mercadorias. A temperatura só será exigida automaticamente para produtos perecíveis (carnes, laticínios, congelados).")
-
-    nivel_usuario = st.session_state.get('nivel', 'Comum')
-    filial_do_login = st.session_state.get('filial_nome', 'TEJUCO')
-
-    if nivel_usuario == "Admin":
-        filial_selected = st.selectbox("🏢 Seleciona a Filial para Recebimento:", MOCK_FILIAIS, index=MOCK_FILIAIS.index(filial_do_login) if filial_do_login in MOCK_FILIAIS else 0)
-    else:
-        filial_selected = filial_do_login
-        st.info(f"📍 **Filial Ativa:** {filial_selected}")
-
-    dados_abertos = buscar_dados_aba_cache("PEDIDOS_ABERTOS")
-    if not dados_abertos:
-        st.success("Nenhum pedido em aberto ou nota a aguardar conferência no sistema.")
-        return
-
-    df_abertos = pd.DataFrame(dados_abertos)
-    df_abertos.columns = [str(c).strip().upper() for c in df_abertos.columns]
-
-    df_receber = df_abertos[
-        (df_abertos["FILIAL"].astype(str).str.strip().str.upper() == str(filial_selected).upper()) &
-        (df_abertos["STATUS"].astype(str).str.upper().str.contains("RECEBIDO", na=False)) &
-        (~df_abertos["STATUS"].astype(str).str.upper().str.contains("CONFERIDO", na=False))
-    ].copy()
-
-    if df_receber.empty:
-        st.success("🎉 Nenhuma mercadoria ou Nota Fiscal pendente de conferência física para esta filial no momento.")
-        return
-
-    if "NUMERO_NF" in df_receber.columns:
-        nfs_disponiveis = [str(nf) for nf in df_receber["NUMERO_NF"].dropna().unique().tolist() if str(nf).strip()]
-    else:
-        nfs_disponiveis = []
-
-    if not nfs_disponiveis:
-        st.info("As notas faturadas ainda não tiveram os seus números vinculados pelo faturamento central.")
-        return
-
-    nf_selecionada = st.selectbox("🚛 Seleciona a Nota Fiscal / Carga que estás a receber:", nfs_disponiveis)
-
-    if nf_selecionada:
-        df_itens_nf = df_receber[df_receber["NUMERO_NF"].astype(str) == str(nf_selecionada)].copy()
-        fornecedor_nf = df_itens_nf.iloc[0]["FORNECEDOR"] if "FORNECEDOR" in df_itens_nf.columns else "Desconhecido"
-
-        st.markdown(f"### 📋 Conferência da Carga - NF: **{nf_selecionada}** ({fornecedor_nf})")
-
-        def exige_temperatura(nome_produto):
-            palavras_chave = ['CARNE', 'FRANGO', 'SUÍNO', 'PEIXE', 'SALSICHA', 'LINGUIÇA', 'QUEIJO', 'PRESUNTO', 'CONGELAD', 'RESFRIAD', 'POLPA', 'IOGURTE', 'MANTEIGA', 'MISTURA LÁCTEA', 'REQUEIJÃO', 'SASSAMI', 'COXA', 'BIFE', 'MOÍDA']
-            return any(p in str(nome_produto).upper() for p in palavras_chave)
-
-        lista_conferencia = []
-        for _, row in df_itens_nf.iterrows():
-            produto = str(row.get("PRODUTO", ""))
-            qtd_xml = float(row.get("QUANTIDADE", 0.0))
-            precisa_temp = exige_temperatura(produto)
-
-            lista_conferencia.append({
-                "Produto": produto,
-                "Qtd Esperada (NF)": qtd_xml,
-                "Qtd Real que Chegou": "0.0",
-                "Lote": "",
-                "Validade (DD/MM/AAAA)": "",
-                "Temperatura ºC": "0.0" if precisa_temp else "Não se aplica"
-            })
-
-        df_conf = pd.DataFrame(lista_conferencia)
-
-        config_colunas = {
-            "Produto": st.column_config.TextColumn("Produto", disabled=True),
-            "Qtd Esperada (NF)": st.column_config.NumberColumn("Qtd NF", disabled=True),
-            "Qtd Real que Chegou": st.column_config.TextColumn("Qtd Recebida Físico", required=True),
-            "Lote": st.column_config.TextColumn("Lote", required=False),
-            "Validade (DD/MM/AAAA)": st.column_config.TextColumn("Validade", required=False),
-            "Temperatura ºC": st.column_config.TextColumn("Temp. ºC", required=False) 
-        }
-
-        df_editado = st.data_editor(
-            df_conf,
-            column_config=config_colunas,
-            hide_index=True,
-            use_container_width=True,
-            key=f"editor_recebimento_{nf_selecionada}"
-        )
-
-        st.write("")
-        if st.button("✅ Salvar Conferência e Fechar Recebimento", type="primary"):
-            with st.spinner("A registar conferência no sistema..."):
-                try:
-                    ws_conf = client.worksheet("CONFERENCIA_FISICA")
-                    ts_agora = dt_mod.now().strftime('%d/%m/%Y %H:%M:%S')
-                    conferente = st.session_state.get('usuario', 'Desconhecido')
-
-                    divergencias_encontradas = []
-
-                    for _, row_ed in df_editado.iterrows():
-                        prod = row_ed["Produto"]
-                        qtd_xml = float(row_ed["Qtd Esperada (NF)"])
-                        qtd_real = tratar_preco_float(row_ed["Qtd Real que Chegou"])
-                        lote = str(row_ed["Lote"])
-                        validade = str(row_ed["Validade (DD/MM/AAAA)"])
-                        temp = str(row_ed["Temperatura ºC"])
-
-                        divergencia = qtd_real - qtd_xml
-                        status_div = "OK" if abs(divergencia) < 0.01 else f"FALTA {abs(divergencia)}" if divergencia < 0 else f"SOBRA {divergencia}"
-
-                        if abs(divergencia) >= 0.01:
-                            divergencias_encontradas.append((prod, qtd_xml, qtd_real, status_div))
-
-                        ws_conf.append_row([
-                            ts_agora, filial_selected, str(nf_selecionada), fornecedor_nf,
-                            prod, f"{qtd_xml:.3f}".replace(".", ","), f"{qtd_real:.3f}".replace(".", ","), status_div, lote, validade, temp, conferente
-                        ])
-
-                    ws_ab = client.worksheet("PEDIDOS_ABERTOS")
-                    grid_ab = ws_ab.get_all_values()
-                    cab_ab = [str(c).strip().upper() for c in grid_ab[0]] if grid_ab else []
-                    idx_nf_ab = cab_ab.index("NUMERO_NF") if "NUMERO_NF" in cab_ab else 9
-                    idx_status_ab = cab_ab.index("STATUS") if "STATUS" in cab_ab else 7
-
-                    for i_ab, row_ab in enumerate(grid_ab):
-                        if i_ab > 0 and len(row_ab) > max(idx_nf_ab, idx_status_ab):
-                            if str(row_ab[idx_nf_ab]).strip().replace("'","") == str(nf_selecionada).strip():
-                                ws_ab.update_cell(i_ab + 1, idx_status_ab + 1, f"CONFERIDO (Físico: {ts_agora[:10]})")
-
-                    st.success("✅ Conferência registada com sucesso!")
-
-                    if divergencias_encontradas:
-                        st.warning("⚠️ Atenção! Foram detetadas divergências entre a Nota Fiscal e a Carga Física:")
-                        for div in divergencias_encontradas:
-                            st.write(f"- **{div[0]}**: NF dizia {div[1]} | Chegou {div[2]} -> **{div[3]}**")
-                        st.info("O Setor de Compras será alertado para tratar com o fornecedor.")
-
-                    st.cache_data.clear()
-                    time_lib.sleep(3)
-                    st.rerun()
-
-                except Exception as e:
-                    st.error(f"Erro ao salvar conferência: {e}")
-
-# =========================================================================
-# FLUXO PRINCIPAL DE NAVEGAÇÃO E EXECUÇÃO
-# =========================================================================
 if client is None: client = conectar_sheets_nativo()
 if st.session_state.get('logado', False):
     st.sidebar.write(f"👤 Utilizador: **{st.session_state.get('usuario', 'Nenhum')}**")
@@ -1863,7 +1391,7 @@ elif modulo_selecionado == "🤝 Portal de Cotação":
     st.success(f"🏢 Empresa Logada: {fornecedor_logado}") 
     st.markdown("---")
     st.markdown("### 📝 Digitação de Preços (Lote Aberto)")
-    st.info("Preenche o valor do pacote e o peso da embalagem (ex: 0.5 para 500g). O sistema calculará o preço por KG automaticamente para a concorrência. Se não tiver o produto, deixa a R$ 0,00.")
+    st.info("Preenche o valor do pacote e o peso da embalagem. O sistema calculará o preço por KG automaticamente para a concorrência. Se não tiver o produto, deixa a R$ 0,00.")
     
     try:
         dados_auditoria_brutos = buscar_dados_aba_cache("AUDITORIA_CONSOLIDADA") 

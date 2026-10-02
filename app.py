@@ -256,24 +256,56 @@ def validar_usuario_sheets(usuario, senha):
     return None, "❌ Utilizador não localizado."
 
 # =========================================================================
-# 🛑 TELA DE LOGIN ISOLADA (ESTÁVEL PARA TELEMÓVEL E PC)
+# 🛑 NOVO LAYOUT DE LOGIN: MODERNO, ELEGANTE E CENTRALIZADO (USUÁRIO / SENHA / ACESSAR)
 # =========================================================================
 container_login = st.empty()
 
 if not st.session_state.get('logado', False):
     with container_login.container():
-        st.markdown("""<style>[data-test-id="stSidebar"] { display: none !important; } .stMainBlockContainer { max-width: 500px; margin: 0 auto; padding-top: 5rem; }</style>""", unsafe_allow_html=True)
-        st.title("🔒 Login - AC Batista ERP")
+        st.markdown("""
+            <style>
+                [data-test-id="stSidebar"] { display: none !important; }
+                .stMainBlockContainer { 
+                    max-width: 450px; 
+                    margin: 0 auto; 
+                    padding-top: 4rem; 
+                }
+                .login-card {
+                    background: #ffffff;
+                    padding: 2.5rem 2rem;
+                    border-radius: 12px;
+                    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.08);
+                    border: 1px solid #eaeaea;
+                }
+                .login-title {
+                    color: #004A99;
+                    font-weight: 700;
+                    text-align: center;
+                    margin-bottom: 0.2rem;
+                    font-size: 1.8rem;
+                }
+                .login-subtitle {
+                    color: #666666;
+                    text-align: center;
+                    margin-bottom: 2rem;
+                    font-size: 0.95rem;
+                }
+            </style>
+        """, unsafe_allow_html=True)
+        
+        st.markdown("<h1 class='login-title'>🔒 AC Batista ERP</h1>", unsafe_allow_html=True)
+        st.markdown("<p class='login-subtitle'>Portal de Gestão e Suprimentos</p>", unsafe_allow_html=True)
         
         with st.form("form_login_ac_batista"):
-            usuario = st.text_input("Utilizador", key="txt_usuario_final")
-            senha = st.text_input("Palavra-passe", type="password", key="txt_senha_final")
+            usuario = st.text_input("Usuário", key="txt_usuario_final", placeholder="Digite o seu usuário")
+            senha = st.text_input("Senha", type="password", key="txt_senha_final", placeholder="Digite a sua senha")
             
-            botao_submeter = st.form_submit_button("Aceder ao Sistema", use_container_width=True)
+            st.markdown("<div style='margin-top: 1rem;'></div>", unsafe_allow_html=True)
+            botao_submeter = st.form_submit_button("Acessar", use_container_width=True)
 
             if botao_submeter:
                 if not usuario or not senha:
-                    st.error("⚠️ Por favor, preenche o utilizador e a palavra-passe.")
+                    st.error("⚠️ Por favor, preencha o usuário e a senha.")
                 else:
                     registro, erro = validar_usuario_sheets(usuario, senha)
                     if erro:
@@ -297,7 +329,7 @@ if not st.session_state.get('logado', False):
                         st.cache_data.clear()
                         st.rerun()
 
-st.markdown("""<style>.stButton>button { background-color: #004A99; color: white; width: 100%; border-radius: 5px; height: 3em; font-weight: bold; } .stButton>button:hover { background-color: #003366; color: white; }</style>""", unsafe_allow_html=True)
+st.markdown("""<style>.stButton>button { background-color: #004A99; color: white; width: 100%; border-radius: 6px; height: 3.2em; font-weight: bold; font-size: 1rem; border: none; } .stButton>button:hover { background-color: #003366; color: white; }</style>""", unsafe_allow_html=True)
 
 @st.cache_data(ttl=60)
 def ler_status_digitacao():
@@ -605,7 +637,7 @@ def modulo_cotacao_consolidacao():
         
         with aba_precos: 
             st.markdown("### 📊 Mesa de Decisão Comercial - Diretor Jardel")
-            st.caption("O sistema calcula automaticamente o preço por KG equivalente e destaca em verde o menor preço de cada produto.")
+            st.caption("O sistema calcula automaticamente o preço por KG equivalente (suportando decimais como 0,5 ou 2,5) e destaca o menor preço.")
 
             if "PRECO_KG_EQUIV" in df_bruto.columns and "FORNECEDOR" in df_bruto.columns:
                 df_bruto["FORNECEDOR_CURTO"] = df_bruto["FORNECEDOR"].apply(encurtar_nome_fornecedor)
@@ -692,7 +724,7 @@ def modulo_cotacao_consolidacao():
                     except Exception as e_automacao: st.error(f"Erro ao processar o arquivamento: {e_automacao}")
 
         # ==========================================
-        # ABA 3: CONFERÊNCIA & DISPARO (COM PREÇO UNITÁRIO EDITÁVEL E TOTAL AUTOMÁTICO)
+        # ABA 3: CONFERÊNCIA & DISPARO (COM PREÇO UNITÁRIO EDITÁVEL E TOTAL DO PEDIDO)
         # ==========================================
         with aba_conferencia:
             st.markdown("### 📑 Espelho de Pedidos e Carrinho de Revisão")
@@ -779,7 +811,7 @@ def modulo_cotacao_consolidacao():
                                     key=f"carrinho_edit_livre_{filial_selecionada_aba3}"
                                 )
 
-                                # Calcula o total por linha em tempo real
+                                # Cálculo automático do preço total por linha e do carrinho
                                 df_carrinho_editado["Preço Total (R$)"] = df_carrinho_editado["Qtd Solicitada (KG)"] * df_carrinho_editado["Preço Unitário (R$)"]
                                 valor_total_geral_carrinho = df_carrinho_editado[df_carrinho_editado["Excluir?"] == False]["Preço Total (R$)"].sum()
 

@@ -371,6 +371,26 @@ def tratar_preco_float(valor):
         return num
     except: return 0.0
 
+# --- NORMALIZADOR DE PESO DEDICADO (SUPORTE A FRACIONADOS 0.5 E GRAMAS) ---
+def tratar_peso_float(valor):
+    try:
+        if isinstance(valor, (int, float)):
+            return float(valor)
+        v_str = str(valor).replace("R$", "").strip()
+        if not v_str or v_str.lower() == 'nan': return 1.0
+        if "," in v_str and "." in v_str:
+            if v_str.rfind(",") > v_str.rfind("."): 
+                v_str = v_str.replace(".", "").replace(",", ".")
+            else: 
+                v_str = v_str.replace(",", "")
+        elif "," in v_str and "." not in v_str: 
+            v_str = v_str.replace(",", ".")
+        num = float(v_str)
+        if num > 10 and num <= 5000:
+            return num / 1000.0
+        return num
+    except: return 1.0
+
 # --- GERADOR DE PDF PROFISSIONAL (REPORTLAB) ---
 def gerar_pdf_pedido(num_pedido, filial_nome, dados_filial, forn_alvo, telefone_forn, prazo_pgto, df_itens, data_entrega):
     buffer = io.BytesIO()
@@ -543,7 +563,7 @@ def modulo_cotacao_consolidacao():
             df_bruto.columns = [str(c).strip().upper() for c in df_bruto.columns] 
 
         if "PRECO_PACOTE" in df_bruto.columns: df_bruto["PRECO_PACOTE"] = df_bruto["PRECO_PACOTE"].apply(tratar_preco_float)
-        if "PESO_EMBALAGEM" in df_bruto.columns: df_bruto["PESO_EMBALAGEM"] = df_bruto["PESO_EMBALAGEM"].apply(tratar_preco_float)
+        if "PESO_EMBALAGEM" in df_bruto.columns: df_bruto["PESO_EMBALAGEM"] = df_bruto["PESO_EMBALAGEM"].apply(tratar_peso_float)
 
         if "PRECO_PACOTE" in df_bruto.columns and "PESO_EMBALAGEM" in df_bruto.columns:
             df_bruto["PRECO_KG_EQUIV"] = df_bruto.apply(lambda row: round(row["PRECO_PACOTE"] / row["PESO_EMBALAGEM"], 2) if row["PESO_EMBALAGEM"] > 0 else row["PRECO_PACOTE"], axis=1)
@@ -558,11 +578,18 @@ def modulo_cotacao_consolidacao():
                 if dados_auditoria_brutos: 
                     df_auditoria_total = pd.DataFrame(dados_auditoria_brutos) 
                     df_auditoria_total.columns = [str(c).strip().upper() for c in df_auditoria_total.columns] 
-                    df_aprovados = df_auditoria_total[df_auditoria_total["STATUS_VALIDACAO"] == "APROVADO"] if "STATUS_VALIDACAO" in df_auditoria_total.columns else df_auditoria_total 
+                    
+                    # CORREÇÃO: Filtra os status válidos enviados pelas nutricionistas (Concluídos, Aprovados, etc.)
+                    if "STATUS_VALIDACAO" in df_auditoria_total.columns:
+                        df_validos = df_auditoria_total[df_auditoria_total["STATUS_VALIDACAO"].astype(str).str.upper().isin(["APROVADO", "CONCLUÍDO FILIAL", "DENTRO DO LIMITE", "⚠ EXCEÇÃO (ESTOURADO)"])]
+                        if df_validos.empty:
+                            df_validos = df_auditoria_total
+                    else:
+                        df_validos = df_auditoria_total
 
-                    if not df_aprovados.empty and all(c in df_aprovados.columns for c in ["PRODUTO", "RESTAURANTE", "PEDIDO_NUTRICIONISTA"]): 
-                        df_aprovados["PEDIDO_NUTRICIONISTA"] = df_aprovados["PEDIDO_NUTRICIONISTA"].apply(tratar_preco_float) 
-                        df_grade_filiais = df_aprovados.pivot_table(index="PRODUTO", columns="RESTAURANTE", values="PEDIDO_NUTRICIONISTA", aggfunc="sum").fillna(0.0).reset_index() 
+                    if not df_validos.empty and all(c in df_validos.columns for c in ["PRODUTO", "RESTAURANTE", "PEDIDO_NUTRICIONISTA"]): 
+                        df_validos["PEDIDO_NUTRICIONISTA"] = df_validos["PEDIDO_NUTRICIONISTA"].apply(tratar_preco_float) 
+                        df_grade_filiais = df_validos.pivot_table(index="PRODUTO", columns="RESTAURANTE", values="PEDIDO_NUTRICIONISTA", aggfunc="sum").fillna(0.0).reset_index() 
                         df_grade_filiais.columns.name = None 
                         colunas_restaurantes = [col for col in df_grade_filiais.columns if col != "PRODUTO"] 
                         df_grade_filiais["Volume Total (KG)"] = df_grade_filiais[colunas_restaurantes].sum(axis=1) 
@@ -692,7 +719,11 @@ def modulo_cotacao_consolidacao():
                     if dados_aud:
                         df_aud_conf = pd.DataFrame(dados_aud)
                         df_aud_conf.columns = [str(c).strip().upper() for c in df_aud_conf.columns]
-                        df_aprov_conf = df_aud_conf[df_aud_conf["STATUS_VALIDACAO"].astype(str).str.upper() == "APROVADO"].copy() if "STATUS_VALIDACAO" in df_aud_conf.columns else df_aud_conf.copy()
+                        
+                        if "STATUS_VALIDACAO" in df_aud_conf.columns:
+                            df_aprov_conf = df_aud_conf[df_aud_conf["STATUS_VALIDACAO"].astype(str).str.upper().isin(["APROVADO", "CONCLUÍDO FILIAL", "DENTRO DO LIMITE", "⚠ EXCEÇÃO (ESTOURADO)"])].copy()
+                        else:
+                            df_aprov_conf = df_aud_conf.copy()
 
                         if not df_aprov_conf.empty and "RESTAURANTE" in df_aprov_conf.columns:
                             lista_filiais_disponiveis = sorted(df_aprov_conf["RESTAURANTE"].dropna().astype(str).str.strip().unique().tolist())
@@ -1077,8 +1108,6 @@ def interface_lancamento_proteina_filial(filial_passada="CENTRO"):
                                     time_lib.sleep(1)
                                     st.rerun()
                         else: st.caption(f"ℹ️ Nenhum pedido pendente de envio na filial {filial_selected}.")
-                    else: st.caption("ℹ️ A folha de cálculo não possui as colunas necessárias ainda.")
-                else: st.caption("ℹ️ A folha de cálculo de auditoria está vazia.")
             except Exception as e_conf:
                 st.error(f"Erro ao processar lote: {e_conf}")
     except Exception as erro_modulo_compras: 
@@ -1378,7 +1407,7 @@ def modulo_entrada_xml():
                     for child in icms:
                         vST_tag = child.find('nfe:vICMSST', ns)
                         if vST_tag is not None: vST = float(vST_tag.text); break
-                            
+                        
                 qtd_usada = max(qCom, qTrib)
                 custo_total_real = vProd + vST
 
@@ -1834,7 +1863,7 @@ elif modulo_selecionado == "🤝 Portal de Cotação":
     st.success(f"🏢 Empresa Logada: {fornecedor_logado}") 
     st.markdown("---")
     st.markdown("### 📝 Digitação de Preços (Lote Aberto)")
-    st.info("Preenche o valor do pacote e o peso da embalagem. O sistema calculará o preço por KG automaticamente para a concorrência. Se não tiver o produto, deixa a R$ 0,00.")
+    st.info("Preenche o valor do pacote e o peso da embalagem (ex: 0.5 para 500g). O sistema calculará o preço por KG automaticamente para a concorrência. Se não tiver o produto, deixa a R$ 0,00.")
     
     try:
         dados_auditoria_brutos = buscar_dados_aba_cache("AUDITORIA_CONSOLIDADA") 
@@ -1843,7 +1872,11 @@ elif modulo_selecionado == "🤝 Portal de Cotação":
         else:
             df_aud = pd.DataFrame(dados_auditoria_brutos) 
             df_aud.columns = [str(c).strip().upper() for c in df_aud.columns] 
-            df_aprov = df_aud[df_aud["STATUS_VALIDACAO"] == "APROVADO"] if "STATUS_VALIDACAO" in df_aud.columns else df_aud 
+            
+            if "STATUS_VALIDACAO" in df_aud.columns:
+                df_aprov = df_aud[df_aud["STATUS_VALIDACAO"].astype(str).str.upper().isin(["APROVADO", "CONCLUÍDO FILIAL", "DENTRO DO LIMITE", "⚠ EXCEÇÃO (ESTOURADO)"])]
+            else:
+                df_aprov = df_aud
 
             if df_aprov.empty:
                 st.success("🎉 Nenhuma cotação pendente no momento. Fica atento às próximas aberturas!")
@@ -1882,16 +1915,14 @@ elif modulo_selecionado == "🤝 Portal de Cotação":
                             for _, row in df_editado_forn.iterrows():
                                 preco_pacote = tratar_preco_float(row["Preço Pacote/Caixa (R$)"])
                                 if preco_pacote > 0:
-                                    peso = tratar_preco_float(row["Peso Embalagem (KG)"])
+                                    peso = tratar_peso_float(row["Peso Embalagem (KG)"])
                                     peso = peso if peso > 0 else 1.0
                                     preco_kg_calc = round(preco_pacote / peso, 4)
                                     
-                                    # Formata explicitamente para string com vírgula para não haver erros no Excel
                                     preco_pacote_str = f"{preco_pacote:.2f}".replace(".", ",")
                                     peso_str = f"{peso:.3f}".replace(".", ",")
                                     preco_kg_calc_str = f"{preco_kg_calc:.4f}".replace(".", ",")
                                     
-                                    # Colunas: DATA_HORA, COD_FORN, FORNECEDOR, PRODUTO, PRECO_PACOTE, UNIDADE, PESO_EMBALAGEM, QTD_MASTER, PRECO_KG_EQUIV, PRECO_CAIXA_MASTER
                                     aba_cotacao.append_row([
                                         ts_agora, 
                                         "FORN_01", 

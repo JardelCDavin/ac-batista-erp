@@ -262,13 +262,38 @@ container_login = st.empty()
 
 if not st.session_state.get('logado', False):
     with container_login.container():
-        st.markdown("""<style>[data-test-id="stSidebar"] { display: none !important; } .stMainBlockContainer { max-width: 500px; margin: 0 auto; padding-top: 5rem; }</style>""", unsafe_allow_html=True)
-        st.title("🔒 Login - AC Batista ERP")
+        st.markdown("""
+            <style>
+                [data-test-id="stSidebar"] { display: none !important; }
+                .stMainBlockContainer { 
+                    max-width: 450px; 
+                    margin: 0 auto; 
+                    padding-top: 4rem; 
+                }
+                .login-title {
+                    color: #004A99;
+                    font-weight: 700;
+                    text-align: center;
+                    margin-bottom: 0.2rem;
+                    font-size: 1.8rem;
+                }
+                .login-subtitle {
+                    color: #666666;
+                    text-align: center;
+                    margin-bottom: 2rem;
+                    font-size: 0.95rem;
+                }
+            </style>
+        """, unsafe_allow_html=True)
+        
+        st.markdown("<h1 class='login-title'>🔒 AC Batista ERP</h1>", unsafe_allow_html=True)
+        st.markdown("<p class='login-subtitle'>Portal de Gestão e Suprimentos</p>", unsafe_allow_html=True)
         
         with st.form("form_login_ac_batista"):
-            usuario = st.text_input("Usuário", key="txt_usuario_final")
-            senha = st.text_input("Senha", type="password", key="txt_senha_final")
+            usuario = st.text_input("Usuário", key="txt_usuario_final", placeholder="Digite o seu usuário")
+            senha = st.text_input("Senha", type="password", key="txt_senha_final", placeholder="Digite a sua senha")
             
+            st.markdown("<div style='margin-top: 1rem;'></div>", unsafe_allow_html=True)
             botao_submeter = st.form_submit_button("Acessar", use_container_width=True)
 
             if botao_submeter:
@@ -297,7 +322,7 @@ if not st.session_state.get('logado', False):
                         st.cache_data.clear()
                         st.rerun()
 
-st.markdown("""<style>.stButton>button { background-color: #004A99; color: white; width: 100%; border-radius: 5px; height: 3em; font-weight: bold; } .stButton>button:hover { background-color: #003366; color: white; }</style>""", unsafe_allow_html=True)
+st.markdown("""<style>.stButton>button { background-color: #004A99; color: white; width: 100%; border-radius: 6px; height: 3.2em; font-weight: bold; font-size: 1rem; border: none; } .stButton>button:hover { background-color: #003366; color: white; }</style>""", unsafe_allow_html=True)
 
 @st.cache_data(ttl=60)
 def ler_status_digitacao():
@@ -529,7 +554,7 @@ def modulo_cotacao_consolidacao():
     st.markdown("## ⚙ Painel de Distribuição de Suprimentos") 
     st.info("Espaço destinado ao gerenciamento logístico de insumos e fechamento de cargas do Diretor Jardel.") 
     
-    with st.expander("⏱️ Controlo de Prazo e Acompanhamento de Fornecedores", expanded=True):
+    with st.expander("⏱️️ Controlo de Prazo e Acompanhamento de Fornecedores", expanded=True):
         col_p1, col_p2, col_p3 = st.columns(3)
         with col_p1: data_limite = st.date_input("Data Limite de Cotação", value=date.today(), key="dt_limite_diretor")
         with col_p2: hora_limite = st.time_input("Horário Limite", value=time_mod(9, 0, 0), key="hr_limite_diretor")
@@ -748,13 +773,9 @@ def modulo_cotacao_consolidacao():
                                     vencedor_aba2 = forn_lista[0] if forn_lista else "FORNECEDOR PADRÃO"
                                     l_dec = df_dec[df_dec["PRODUTO"] == produto_nome]
                                     
-                                    preco_sugerido_unit = 0.0
                                     if not l_dec.empty:
                                         sug = str(l_dec.iloc[0].get("Sugestão Sistema", "")).strip()
                                         if sug in forn_lista: vencedor_aba2 = sug
-                                        if vencedor_aba2 in l_dec.columns:
-                                            val_p = l_dec.iloc[0][vencedor_aba2]
-                                            preco_sugerido_unit = float(val_p) if pd.notna(val_p) else 0.0
 
                                     lista_carrinho.append({
                                         "Excluir?": False,
@@ -777,7 +798,7 @@ def modulo_cotacao_consolidacao():
                                     key=f"carrinho_edit_livre_{filial_selecionada_aba3}"
                                 )
 
-                                # Inteligência de atualização de preço baseada no fornecedor selecionado na tabela
+                                # Atualiza dinamicamente o preço unitário e o total com base no fornecedor escolhido na tabela
                                 precos_atualizados = []
                                 totais_atualizados = []
                                 for _, r_c in df_carrinho_editado.iterrows():
@@ -1130,7 +1151,7 @@ def interface_lancamento_proteina_filial(filial_passada="CENTRO"):
                                     st.cache_data.clear()
                                     time_lib.sleep(1)
                                     st.rerun()
-                        else: st.caption(f"ℹ️ Nenhum pedido pendente de envio na filial {filial_selected}.")
+                        else: st.caption(f"ℹ️️ Nenhum pedido pendente de envio na filial {filial_selected}.")
             except Exception as e_conf:
                 st.error(f"Erro ao processar lote: {e_conf}")
     except Exception as erro_modulo_compras: 

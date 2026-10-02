@@ -341,7 +341,7 @@ def encurtar_nome_fornecedor(nome_completo):
     partes = n.split()
     return partes[0].title() if partes else "Fornecedor"
 
-# --- TRATADOR EXCLUSIVO PARA PREÇOS (MANTÉM HEURÍSTICA DE CENTS) ---
+# --- TRATADOR EXCLUSIVO PARA PREÇOS ---
 def tratar_preco_float(valor): 
     try: 
         if isinstance(valor, (int, float)): 
@@ -371,7 +371,7 @@ def tratar_preco_float(valor):
         return num
     except: return 0.0
 
-# --- TRATADOR PURO PARA QUANTIDADES E PESOS (NÃO DIVIDE NÚMEROS REAIS) ---
+# --- TRATADOR PURO PARA QUANTIDADES ---
 def tratar_qtd_float(valor):
     try:
         if isinstance(valor, (int, float)):
@@ -388,12 +388,15 @@ def tratar_qtd_float(valor):
         return float(v_str)
     except: return 0.0
 
+# --- TRATADOR DE PESO ROBUSTO PARA DECIMAIS (0,5 / 0.5 / 2,5) ---
 def tratar_peso_float(valor):
     try:
         if isinstance(valor, (int, float)):
             return float(valor)
         v_str = str(valor).replace("R$", "").strip()
         if not v_str or v_str.lower() == 'nan': return 1.0
+        
+        # Trata formato decimal com vírgula ou ponto perfeitamente (ex: 0,5 / 0.5 / 2,5)
         if "," in v_str and "." in v_str:
             if v_str.rfind(",") > v_str.rfind("."): 
                 v_str = v_str.replace(".", "").replace(",", ".")
@@ -401,10 +404,8 @@ def tratar_peso_float(valor):
                 v_str = v_str.replace(",", "")
         elif "," in v_str and "." not in v_str: 
             v_str = v_str.replace(",", ".")
-        num = float(v_str)
-        if num > 10 and num <= 5000:
-            return num / 1000.0
-        return num
+            
+        return float(v_str)
     except: return 1.0
 
 def gerar_pdf_pedido(num_pedido, filial_nome, dados_filial, forn_alvo, telefone_forn, prazo_pgto, df_itens, data_entrega):
@@ -502,7 +503,7 @@ def consolidar_proteina_semanal_geral(restaurante_filtro="Todos"):
         produto = str(linha.get("PRODUTO", "")).strip()
         try:
             val = linha.get("PEDIDO_NUTRICIONISTA", 0)
-            qtd = tratar_qtd_float(val) # CORRIGIDO: Usa tratar_qtd_float para não alterar o peso real
+            qtd = tratar_qtd_float(val)
         except: qtd = 0.0
         if produto and qtd > 0:
             df_linhas.append({"Filial": filial_reg, "Proteína / Item": produto, "Quantidade Lançada (KG)": qtd, "Status": linha.get("STATUS_VALIDACAO", ""), "Justificativa da Nutricionista": linha.get("JUSTIFICATIVA", "")})
@@ -599,7 +600,7 @@ def modulo_cotacao_consolidacao():
                         df_validos = df_auditoria_total
 
                     if not df_validos.empty and all(c in df_validos.columns for c in ["PRODUTO", "RESTAURANTE", "PEDIDO_NUTRICIONISTA"]): 
-                        df_validos["PEDIDO_NUTRICIONISTA"] = df_validos["PEDIDO_NUTRICIONISTA"].apply(tratar_qtd_float) # CORRIGIDO: Usa tratar_qtd_float
+                        df_validos["PEDIDO_NUTRICIONISTA"] = df_validos["PEDIDO_NUTRICIONISTA"].apply(tratar_qtd_float) 
                         df_grade_filiais = df_validos.pivot_table(index="PRODUTO", columns="RESTAURANTE", values="PEDIDO_NUTRICIONISTA", aggfunc="sum").fillna(0.0).reset_index() 
                         df_grade_filiais.columns.name = None 
                         colunas_restaurantes = [col for col in df_grade_filiais.columns if col != "PRODUTO"] 
@@ -610,7 +611,7 @@ def modulo_cotacao_consolidacao():
         
         with aba_precos: 
             st.markdown("### 📊 Mesa de Decisão Comercial - Diretor Jardel")
-            st.caption("O sistema calcula automaticamente o preço por KG equivalente e destaca em verde o menor preço de cada produto.")
+            st.caption("O sistema calcula automaticamente o preço por KG equivalente (suportando decimais como 0,5 ou 2,5) e destaca o menor preço.")
 
             if "PRECO_KG_EQUIV" in df_bruto.columns and "FORNECEDOR" in df_bruto.columns:
                 df_bruto["FORNECEDOR_CURTO"] = df_bruto["FORNECEDOR"].apply(encurtar_nome_fornecedor)
@@ -745,7 +746,7 @@ def modulo_cotacao_consolidacao():
                                 lista_carrinho = []
                                 for _, row_i in df_itens_filial.iterrows():
                                     produto_nome = str(row_i.get("PRODUTO", "")).strip()
-                                    qtd_nutri_original = tratar_qtd_float(row_i.get("PEDIDO_NUTRICIONISTA", 0.0)) # CORRIGIDO
+                                    qtd_nutri_original = tratar_qtd_float(row_i.get("PEDIDO_NUTRICIONISTA", 0.0))
 
                                     vencedor_aba2 = forn_lista[0] if forn_lista else "FORNECEDOR PADRÃO"
                                     l_dec = df_dec[df_dec["PRODUTO"] == produto_nome]
@@ -794,7 +795,7 @@ def modulo_cotacao_consolidacao():
                                             linhas_espelho = []
                                             for _, row_item in df_f_pedidos.iterrows():
                                                 p_nome = row_item["Produto"]
-                                                p_qtd = tratar_qtd_float(row_item["Qtd Solicitada"]) # CORRIGIDO
+                                                p_qtd = tratar_qtd_float(row_item["Qtd Solicitada"])
                                                 
                                                 preco_u = 0.0
                                                 l_dec = df_dec[df_dec["PRODUTO"] == p_nome]
@@ -1024,7 +1025,7 @@ def interface_lancamento_proteina_filial(filial_passada="CENTRO"):
                                     f"{pedido_sugerido:.3f}".replace(".", ","), 
                                     status_v, jst
                                 ])
-                                st.success("✔️️ Adicionado! Vai para a Aba 2 para Conferir e Enviar ao Diretor.")
+                                st.success("✔️ Adicionado! Vai para a Aba 2 para Conferir e Enviar ao Diretor.")
                                 st.cache_data.clear()
                                 time_lib.sleep(1)
                                 st.rerun()
@@ -1056,7 +1057,7 @@ def interface_lancamento_proteina_filial(filial_passada="CENTRO"):
                                 if col not in df_f.columns: df_f[col] = ""
                             df_ex = df_f[cols_necessarias].copy()
                             
-                            df_ex["PEDIDO_NUTRICIONISTA"] = df_ex["PEDIDO_NUTRICIONISTA"].apply(tratar_qtd_float) # CORRIGIDO
+                            df_ex["PEDIDO_NUTRICIONISTA"] = df_ex["PEDIDO_NUTRICIONISTA"].apply(tratar_qtd_float)
                             df_ex.columns = ["Excluir?", "Produto", "Semana", "Qtd Solicitada (KG)", "Status", "Justificativa Operacional"]
                             
                             cfg = {
@@ -1184,7 +1185,7 @@ def modulo_compras_suprimentos():
                                         str(lista_valores[2]),
                                         str(lista_valores[3]),
                                         str(lista_valores[4]),
-                                        tratar_qtd_float(lista_valores[5]), # CORRIGIDO
+                                        tratar_qtd_float(lista_valores[5]),
                                         tratar_preco_float(lista_valores[6]),
                                         "FINALIZADO",
                                         str(lista_valores[8]),
@@ -1287,7 +1288,7 @@ def modulo_compras_suprimentos():
                 for _, r_item in df_itens_digitados.iterrows():
                     c_int = str(r_item["Código Interno"]).strip()
                     p_desc = str(r_item["Produto / Descrição"]).strip()
-                    q_val = tratar_qtd_float(r_item["Quantidade"]) # CORRIGIDO
+                    q_val = tratar_qtd_float(r_item["Quantidade"])
                     
                     if c_int and not p_desc:
                         p_desc = cod_para_prod.get(c_int, f"CÓDIGO {c_int}")
@@ -1409,7 +1410,7 @@ elif modulo_selecionado == "🤝 Portal de Cotação":
     st.success(f"🏢 Empresa Logada: {fornecedor_logado}") 
     st.markdown("---")
     st.markdown("### 📝 Digitação de Preços (Lote Aberto)")
-    st.info("Preenche o valor do pacote e o peso da embalagem. O sistema calculará o preço por KG automaticamente para a concorrência. Se não tiver o produto, deixa a R$ 0,00.")
+    st.info("Preenche o valor do pacote e o peso da embalagem (suporta decimais como 0,5 ou 2,5). O sistema calculará o preço por KG automaticamente.")
     
     try:
         dados_auditoria_brutos = buscar_dados_aba_cache("AUDITORIA_CONSOLIDADA") 

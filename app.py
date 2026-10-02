@@ -717,11 +717,11 @@ def modulo_cotacao_consolidacao():
                     except Exception as e_automacao: st.error(f"Erro ao processar o arquivamento: {e_automacao}")
 
         # ==========================================
-        # ABA 3: CONFERÊNCIA & DISPARO (COM EXIBIÇÃO E ATUALIZAÇÃO VISUAL DE PREÇOS NA TABELA)
+        # ABA 3: CONFERÊNCIA & DISPARO (CORRIGIDO: O PREÇO ATUALIZA IMEDIATAMENTE AO TROCAR O FORNECEDOR)
         # ==========================================
         with aba_conferencia:
             st.markdown("### 📑 Espelho de Pedidos e Carrinho de Revisão")
-            st.caption("Revê o pedido, altera o fornecedor de destino na tabela (o preço unitário e o total atualizam automaticamente), e gera o espelho oficial em PDF.")
+            st.caption("Revê o pedido, altera o fornecedor de destino na tabela (o preço unitário e o total atualizam instantaneamente), e gera o espelho oficial em PDF.")
             
             try:
                 dados_aud = buscar_dados_aba_cache("AUDITORIA_CONSOLIDADA")
@@ -765,36 +765,39 @@ def modulo_cotacao_consolidacao():
                                 
                                 st.markdown(f"#### 🛒 Carrinho Editável - {filial_selecionada_aba3}")
                                 
-                                lista_carrinho = []
-                                for _, row_i in df_itens_filial.iterrows():
-                                    produto_nome = str(row_i.get("PRODUTO", "")).strip()
-                                    qtd_nutri_original = tratar_qtd_float(row_i.get("PEDIDO_NUTRICIONISTA", 0.0))
-
-                                    vencedor_aba2 = forn_lista[0] if forn_lista else "FORNECEDOR PADRÃO"
-                                    l_dec = df_dec[df_dec["PRODUTO"] == produto_nome]
-                                    
-                                    preco_sugerido_unit = 0.0
-                                    if not l_dec.empty:
-                                        sug = str(l_dec.iloc[0].get("Sugestão Sistema", "")).strip()
-                                        if sug in forn_lista: vencedor_aba2 = sug
-                                        if vencedor_aba2 in l_dec.columns:
-                                            val_p = l_dec.iloc[0][vencedor_aba2]
-                                            preco_sugerido_unit = float(val_p) if pd.notna(val_p) else 0.0
-
-                                    lista_carrinho.append({
-                                        "Excluir?": False,
-                                        "Produto": produto_nome,
-                                        "Qtd Solicitada (KG)": float(qtd_nutri_original),
-                                        "Fornecedor Destino": vencedor_aba2,
-                                        "Preço Unit. (R$)": float(preco_sugerido_unit),
-                                        "Preço Total (R$)": float(qtd_nutri_original * preco_sugerido_unit)
-                                    })
-
-                                df_carrinho = pd.DataFrame(lista_carrinho)
+                                # Chave única para guardar o estado do carrinho desta filial no session_state
+                                key_carrinho_state = f"carrinho_df_{filial_selecionada_aba3}"
                                 
-                                # Renderiza a tabela incluindo visivelmente as colunas de Preço Unitário e Preço Total (atualizadas em tempo real)
+                                if key_carrinho_state not in st.session_state:
+                                    lista_carrinho = []
+                                    for _, row_i in df_itens_filial.iterrows():
+                                        produto_nome = str(row_i.get("PRODUTO", "")).strip()
+                                        qtd_nutri_original = tratar_qtd_float(row_i.get("PEDIDO_NUTRICIONISTA", 0.0))
+
+                                        vencedor_aba2 = forn_lista[0] if forn_lista else "FORNECEDOR PADRÃO"
+                                        l_dec = df_dec[df_dec["PRODUTO"] == produto_nome]
+                                        
+                                        preco_sugerido_unit = 0.0
+                                        if not l_dec.empty:
+                                            sug = str(l_dec.iloc[0].get("Sugestão Sistema", "")).strip()
+                                            if sug in forn_lista: vencedor_aba2 = sug
+                                            if vencedor_aba2 in l_dec.columns:
+                                                val_p = l_dec.iloc[0][vencedor_aba2]
+                                                preco_sugerido_unit = float(val_p) if pd.notna(val_p) else 0.0
+
+                                        lista_carrinho.append({
+                                            "Excluir?": False,
+                                            "Produto": produto_nome,
+                                            "Qtd Solicitada (KG)": float(qtd_nutri_original),
+                                            "Fornecedor Destino": vencedor_aba2,
+                                            "Preço Unit. (R$)": float(preco_sugerido_unit),
+                                            "Preço Total (R$)": float(qtd_nutri_original * preco_sugerido_unit)
+                                        })
+                                    st.session_state[key_carrinho_state] = pd.DataFrame(lista_carrinho)
+
+                                # Renderiza o editor de dados conectado ao session_state
                                 df_carrinho_editado = st.data_editor(
-                                    df_carrinho,
+                                    st.session_state[key_carrinho_state],
                                     column_config={
                                         "Excluir?": st.column_config.CheckboxColumn("Remover", default=False),
                                         "Produto": st.column_config.TextColumn("Descrição do Produto", disabled=True),
@@ -808,26 +811,32 @@ def modulo_cotacao_consolidacao():
                                     key=f"carrinho_edit_livre_{filial_selecionada_aba3}"
                                 )
 
-                                # Recalcula preços e totais com base na seleção atual do fornecedor na tabela
-                                precos_atualizados = []
-                                totais_atualizados = []
-                                for _, r_c in df_carrinho_editado.iterrows():
-                                    p_nome = r_c["Produto"]
-                                    f_dest = r_c["Fornecedor Destino"]
-                                    q_val = tratar_qtd_float(r_c["Qtd Solicitada (KG)"])
-                                    
-                                    p_unit = 0.0
-                                    l_dec = df_dec[df_dec["PRODUTO"] == p_nome]
-                                    if not l_dec.empty and f_dest in l_dec.columns:
-                                        val_f = l_dec.iloc[0][f_dest]
-                                        p_unit = float(val_f) if pd.notna(val_f) else 0.0
-                                    
-                                    precos_atualizados.append(p_unit)
-                                    totais_atualizados.append(round(q_val * p_unit, 2))
+                                # Atualiza em tempo real os preços e totais com base na alteração de fornecedor ou quantidade
+                                mudou = False
+                                for i in range(len(df_carrinho_editado)):
+                                    f_novo = df_carrinho_editado.loc[i, "Fornecedor Destino"]
+                                    f_antigo = st.session_state[key_carrinho_state].loc[i, "Fornecedor Destino"]
+                                    q_novo = tratar_qtd_float(df_carrinho_editado.loc[i, "Qtd Solicitada (KG)"])
+                                    q_antigo = tratar_qtd_float(st.session_state[key_carrinho_state].loc[i, "Qtd Solicitada (KG)"])
+                                    exc_novo = df_carrinho_editado.loc[i, "Excluir?"]
+                                    exc_antigo = st.session_state[key_carrinho_state].loc[i, "Excluir?"]
 
-                                df_carrinho_editado["Preço Unit. (R$)"] = precos_atualizados
-                                df_carrinho_editado["Preço Total (R$)"] = totais_atualizados
-                                
+                                    if f_novo != f_antigo or q_novo != q_antigo or exc_novo != exc_antigo:
+                                        mudou = True
+                                        p_nome = df_carrinho_editado.loc[i, "Produto"]
+                                        p_unit = 0.0
+                                        l_dec = df_dec[df_dec["PRODUTO"] == p_nome]
+                                        if not l_dec.empty and f_novo in l_dec.columns:
+                                            val_f = l_dec.iloc[0][f_novo]
+                                            p_unit = float(val_f) if pd.notna(val_f) else 0.0
+                                        
+                                        df_carrinho_editado.loc[i, "Preço Unit. (R$)"] = p_unit
+                                        df_carrinho_editado.loc[i, "Preço Total (R$)"] = round(q_novo * p_unit, 2)
+
+                                if mudou:
+                                    st.session_state[key_carrinho_state] = df_carrinho_editado
+                                    st.rerun()
+
                                 valor_total_geral_carrinho = df_carrinho_editado[df_carrinho_editado["Excluir?"] == False]["Preço Total (R$)"].sum()
 
                                 st.markdown(f"### 💰 **Valor Total do Carrinho: R$ {valor_total_geral_carrinho:,.2f}**")
@@ -1062,7 +1071,7 @@ def interface_lancamento_proteina_filial(filial_passada="CENTRO"):
                                         st.error(f"⚠️ Bloqueio: Já enviaste o pedido de {produto_selecionado} ({st.session_state['semana_atual']}) para o Diretor neste ciclo! Se precisares de mais, entra em contacto com a Diretoria.")
                                         block = True; break
                                     elif status_atual in ["DENTRO DO LIMITE", "⚠ EXCEÇÃO (ESTOURADO)", ""]:
-                                        st.error(f"⚠️️ Atenção: O item {produto_selecionado} já está no teu carrinho na Aba 2 (Conferência) a aguardar envio. Vai até lá se precisares alterar a quantidade.")
+                                        st.error(f"⚠️ Atenção: O item {produto_selecionado} já está no teu carrinho na Aba 2 (Conferência) a aguardar envio. Vai até lá se precisares alterar a quantidade.")
                                         block = True; break
                         
                         if st.button("➕ ADICIONAR À CONFERÊNCIA (VAI PARA ABA 2)", disabled=block, key="btn_grv"):

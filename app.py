@@ -341,7 +341,6 @@ def encurtar_nome_fornecedor(nome_completo):
     partes = n.split()
     return partes[0].title() if partes else "Fornecedor"
 
-# --- TRATADOR EXCLUSIVO PARA PREÇOS ---
 def tratar_preco_float(valor): 
     try: 
         if isinstance(valor, (int, float)): 
@@ -371,7 +370,6 @@ def tratar_preco_float(valor):
         return num
     except: return 0.0
 
-# --- TRATADOR PURO PARA QUANTIDADES ---
 def tratar_qtd_float(valor):
     try:
         if isinstance(valor, (int, float)):
@@ -388,15 +386,12 @@ def tratar_qtd_float(valor):
         return float(v_str)
     except: return 0.0
 
-# --- TRATADOR DE PESO ROBUSTO PARA DECIMAIS (0,5 / 0.5 / 2,5) ---
 def tratar_peso_float(valor):
     try:
         if isinstance(valor, (int, float)):
             return float(valor)
         v_str = str(valor).replace("R$", "").strip()
         if not v_str or v_str.lower() == 'nan': return 1.0
-        
-        # Trata formato decimal com vírgula ou ponto perfeitamente (ex: 0,5 / 0.5 / 2,5)
         if "," in v_str and "." in v_str:
             if v_str.rfind(",") > v_str.rfind("."): 
                 v_str = v_str.replace(".", "").replace(",", ".")
@@ -404,7 +399,6 @@ def tratar_peso_float(valor):
                 v_str = v_str.replace(",", "")
         elif "," in v_str and "." not in v_str: 
             v_str = v_str.replace(",", ".")
-            
         return float(v_str)
     except: return 1.0
 
@@ -611,7 +605,7 @@ def modulo_cotacao_consolidacao():
         
         with aba_precos: 
             st.markdown("### 📊 Mesa de Decisão Comercial - Diretor Jardel")
-            st.caption("O sistema calcula automaticamente o preço por KG equivalente (suportando decimais como 0,5 ou 2,5) e destaca o menor preço.")
+            st.caption("O sistema calcula automaticamente o preço por KG equivalente e destaca em verde o menor preço de cada produto.")
 
             if "PRECO_KG_EQUIV" in df_bruto.columns and "FORNECEDOR" in df_bruto.columns:
                 df_bruto["FORNECEDOR_CURTO"] = df_bruto["FORNECEDOR"].apply(encurtar_nome_fornecedor)
@@ -697,9 +691,12 @@ def modulo_cotacao_consolidacao():
                         st.balloons(); st.cache_data.clear(); st.rerun()
                     except Exception as e_automacao: st.error(f"Erro ao processar o arquivamento: {e_automacao}")
 
+        # ==========================================
+        # ABA 3: CONFERÊNCIA & DISPARO (COM PREÇO UNITÁRIO EDITÁVEL E TOTAL AUTOMÁTICO)
+        # ==========================================
         with aba_conferencia:
             st.markdown("### 📑 Espelho de Pedidos e Carrinho de Revisão")
-            st.caption("Revê o pedido, ajusta quantidades ou fornecedores, e baixa o espelho oficial em PDF com o prazo de entrega calculado automaticamente.")
+            st.caption("Revê o pedido, ajusta quantidades ou fornecedores, edita o preço unitário se necessário, e gera o espelho oficial em PDF.")
             
             try:
                 dados_aud = buscar_dados_aba_cache("AUDITORIA_CONSOLIDADA")
@@ -750,14 +747,20 @@ def modulo_cotacao_consolidacao():
 
                                     vencedor_aba2 = forn_lista[0] if forn_lista else "FORNECEDOR PADRÃO"
                                     l_dec = df_dec[df_dec["PRODUTO"] == produto_nome]
+                                    
+                                    preco_sugerido_unit = 0.0
                                     if not l_dec.empty:
                                         sug = str(l_dec.iloc[0].get("Sugestão Sistema", "")).strip()
                                         if sug in forn_lista: vencedor_aba2 = sug
+                                        if vencedor_aba2 in l_dec.columns:
+                                            val_p = l_dec.iloc[0][vencedor_aba2]
+                                            preco_sugerido_unit = float(val_p) if pd.notna(val_p) else 0.0
 
                                     lista_carrinho.append({
                                         "Excluir?": False,
                                         "Produto": produto_nome,
-                                        "Qtd Solicitada": float(qtd_nutri_original),
+                                        "Qtd Solicitada (KG)": float(qtd_nutri_original),
+                                        "Preço Unitário (R$)": float(preco_sugerido_unit),
                                         "Fornecedor Destino": vencedor_aba2
                                     })
 
@@ -767,7 +770,8 @@ def modulo_cotacao_consolidacao():
                                     column_config={
                                         "Excluir?": st.column_config.CheckboxColumn("Remover", default=False),
                                         "Produto": st.column_config.TextColumn("Descrição do Produto", disabled=True),
-                                        "Qtd Solicitada": st.column_config.NumberColumn("Quantidade (KG)", min_value=0.0, step=0.5, format="%.2f"),
+                                        "Qtd Solicitada (KG)": st.column_config.NumberColumn("Qtd (KG)", min_value=0.0, step=0.5, format="%.2f"),
+                                        "Preço Unitário (R$)": st.column_config.NumberColumn("Preço Unit. (R$)", min_value=0.0, step=0.01, format="R$ %.2f"),
                                         "Fornecedor Destino": st.column_config.SelectboxColumn("Fornecedor Destino", options=forn_lista, required=True)
                                     },
                                     hide_index=True,
@@ -775,10 +779,15 @@ def modulo_cotacao_consolidacao():
                                     key=f"carrinho_edit_livre_{filial_selecionada_aba3}"
                                 )
 
+                                # Calcula o total por linha em tempo real
+                                df_carrinho_editado["Preço Total (R$)"] = df_carrinho_editado["Qtd Solicitada (KG)"] * df_carrinho_editado["Preço Unitário (R$)"]
+                                valor_total_geral_carrinho = df_carrinho_editado[df_carrinho_editado["Excluir?"] == False]["Preço Total (R$)"].sum()
+
+                                st.markdown(f"### 💰 **Valor Total do Carrinho: R$ {valor_total_geral_carrinho:,.2f}**")
                                 st.markdown("---")
                                 
                                 if st.button(f"🖨️ Gerar Espelhos de Pedidos Oficiais para {filial_selecionada_aba3}", type="primary", use_container_width=True):
-                                    itens_validos = df_carrinho_editado[(df_carrinho_editado["Excluir?"] == False) & (df_carrinho_editado["Qtd Solicitada"] > 0)]
+                                    itens_validos = df_carrinho_editado[(df_carrinho_editado["Excluir?"] == False) & (df_carrinho_editado["Qtd Solicitada (KG)"] > 0)]
                                     
                                     if itens_validos.empty:
                                         st.warning("⚠️ Nenhum item no carrinho para emitir.")
@@ -795,13 +804,8 @@ def modulo_cotacao_consolidacao():
                                             linhas_espelho = []
                                             for _, row_item in df_f_pedidos.iterrows():
                                                 p_nome = row_item["Produto"]
-                                                p_qtd = tratar_qtd_float(row_item["Qtd Solicitada"])
-                                                
-                                                preco_u = 0.0
-                                                l_dec = df_dec[df_dec["PRODUTO"] == p_nome]
-                                                if not l_dec.empty and forn_alvo in l_dec.columns:
-                                                    val = l_dec.iloc[0][forn_alvo]
-                                                    preco_u = float(val) if pd.notna(val) else 0.0
+                                                p_qtd = tratar_qtd_float(row_item["Qtd Solicitada (KG)"])
+                                                preco_u = float(row_item["Preço Unitário (R$)"])
                                                 
                                                 linhas_espelho.append({
                                                     "Código": "0545",
@@ -829,7 +833,7 @@ def modulo_cotacao_consolidacao():
                                                     "Total": st.column_config.NumberColumn(format="R$ %.2f")
                                                 })
                                                 val_total_pedido = df_tabela_espelho["Total"].sum()
-                                                st.markdown(f"### **Valor Total: R$ {val_total_pedido:,.2f}**")
+                                                st.markdown(f"### **Valor Total do Pedido: R$ {val_total_pedido:,.2f}**")
                                                 
                                                 prev_entrega = st.date_input("Ajustar Data de Previsão de Entrega:", value=data_prevista_auto, key=f"prev_pdf_{filial_selecionada_aba3}_{num_seq}_{forn_alvo}", format="DD/MM/YYYY")
                                                 
@@ -1410,7 +1414,7 @@ elif modulo_selecionado == "🤝 Portal de Cotação":
     st.success(f"🏢 Empresa Logada: {fornecedor_logado}") 
     st.markdown("---")
     st.markdown("### 📝 Digitação de Preços (Lote Aberto)")
-    st.info("Preenche o valor do pacote e o peso da embalagem (suporta decimais como 0,5 ou 2,5). O sistema calculará o preço por KG automaticamente.")
+    st.info("Preenche o valor do pacote e o peso da embalagem (suporta decimais como 0,5 ou 2,5). O sistema calculará o preço por KG automaticamente para a concorrência. Se não tiver o produto, deixa a R$ 0,00.")
     
     try:
         dados_auditoria_brutos = buscar_dados_aba_cache("AUDITORIA_CONSOLIDADA") 

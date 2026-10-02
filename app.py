@@ -322,7 +322,7 @@ if not st.session_state.get('logado', False):
                         st.cache_data.clear()
                         st.rerun()
 
-st.markdown("""<style>.stButton>button { background-color: #004A99; color: white; width: 100%; border-radius: 6px; height: 3.2em; font-weight: bold; font-size: 1rem; border: none; } .stButton>button:hover { background-color: #003366; color: white; }</style>""", unsafe_allow_html=True)
+st.markdown("""<style>.stButton>button { background-color: #004A99; color: white; width: 100%; border-radius: 5px; height: 3em; font-weight: bold; } .stButton>button:hover { background-color: #003366; color: white; }</style>""", unsafe_allow_html=True)
 
 @st.cache_data(ttl=60)
 def ler_status_digitacao():
@@ -554,7 +554,7 @@ def modulo_cotacao_consolidacao():
     st.markdown("## ⚙ Painel de Distribuição de Suprimentos") 
     st.info("Espaço destinado ao gerenciamento logístico de insumos e fechamento de cargas do Diretor Jardel.") 
     
-    with st.expander("⏱️️ Controlo de Prazo e Acompanhamento de Fornecedores", expanded=True):
+    with st.expander("⏱️ Controlo de Prazo e Acompanhamento de Fornecedores", expanded=True):
         col_p1, col_p2, col_p3 = st.columns(3)
         with col_p1: data_limite = st.date_input("Data Limite de Cotação", value=date.today(), key="dt_limite_diretor")
         with col_p2: hora_limite = st.time_input("Horário Limite", value=time_mod(9, 0, 0), key="hr_limite_diretor")
@@ -717,11 +717,11 @@ def modulo_cotacao_consolidacao():
                     except Exception as e_automacao: st.error(f"Erro ao processar o arquivamento: {e_automacao}")
 
         # ==========================================
-        # ABA 3: CONFERÊNCIA & DISPARO (COM ALTERAÇÃO DINÂMICA DE FORNECEDOR E PREÇO)
+        # ABA 3: CONFERÊNCIA & DISPARO (COM EXIBIÇÃO E ATUALIZAÇÃO VISUAL DE PREÇOS NA TABELA)
         # ==========================================
         with aba_conferencia:
             st.markdown("### 📑 Espelho de Pedidos e Carrinho de Revisão")
-            st.caption("Revê o pedido, altera o fornecedor de destino se necessário (o preço atualiza automaticamente), e gera o espelho oficial em PDF.")
+            st.caption("Revê o pedido, altera o fornecedor de destino na tabela (o preço unitário e o total atualizam automaticamente), e gera o espelho oficial em PDF.")
             
             try:
                 dados_aud = buscar_dados_aba_cache("AUDITORIA_CONSOLIDADA")
@@ -773,32 +773,42 @@ def modulo_cotacao_consolidacao():
                                     vencedor_aba2 = forn_lista[0] if forn_lista else "FORNECEDOR PADRÃO"
                                     l_dec = df_dec[df_dec["PRODUTO"] == produto_nome]
                                     
+                                    preco_sugerido_unit = 0.0
                                     if not l_dec.empty:
                                         sug = str(l_dec.iloc[0].get("Sugestão Sistema", "")).strip()
                                         if sug in forn_lista: vencedor_aba2 = sug
+                                        if vencedor_aba2 in l_dec.columns:
+                                            val_p = l_dec.iloc[0][vencedor_aba2]
+                                            preco_sugerido_unit = float(val_p) if pd.notna(val_p) else 0.0
 
                                     lista_carrinho.append({
                                         "Excluir?": False,
                                         "Produto": produto_nome,
                                         "Qtd Solicitada (KG)": float(qtd_nutri_original),
-                                        "Fornecedor Destino": vencedor_aba2
+                                        "Fornecedor Destino": vencedor_aba2,
+                                        "Preço Unit. (R$)": float(preco_sugerido_unit),
+                                        "Preço Total (R$)": float(qtd_nutri_original * preco_sugerido_unit)
                                     })
 
                                 df_carrinho = pd.DataFrame(lista_carrinho)
+                                
+                                # Renderiza a tabela incluindo visivelmente as colunas de Preço Unitário e Preço Total (atualizadas em tempo real)
                                 df_carrinho_editado = st.data_editor(
                                     df_carrinho,
                                     column_config={
                                         "Excluir?": st.column_config.CheckboxColumn("Remover", default=False),
                                         "Produto": st.column_config.TextColumn("Descrição do Produto", disabled=True),
                                         "Qtd Solicitada (KG)": st.column_config.NumberColumn("Qtd (KG)", min_value=0.0, step=0.5, format="%.2f"),
-                                        "Fornecedor Destino": st.column_config.SelectboxColumn("Fornecedor Destino", options=forn_lista, required=True)
+                                        "Fornecedor Destino": st.column_config.SelectboxColumn("Fornecedor Destino", options=forn_lista, required=True),
+                                        "Preço Unit. (R$)": st.column_config.NumberColumn("Preço Unit. (R$)", disabled=True, format="R$ %.2f"),
+                                        "Preço Total (R$)": st.column_config.NumberColumn("Preço Total (R$)", disabled=True, format="R$ %.2f")
                                     },
                                     hide_index=True,
                                     use_container_width=True,
                                     key=f"carrinho_edit_livre_{filial_selecionada_aba3}"
                                 )
 
-                                # Atualiza dinamicamente o preço unitário e o total com base no fornecedor escolhido na tabela
+                                # Recalcula preços e totais com base na seleção atual do fornecedor na tabela
                                 precos_atualizados = []
                                 totais_atualizados = []
                                 for _, r_c in df_carrinho_editado.iterrows():
@@ -1052,7 +1062,7 @@ def interface_lancamento_proteina_filial(filial_passada="CENTRO"):
                                         st.error(f"⚠️ Bloqueio: Já enviaste o pedido de {produto_selecionado} ({st.session_state['semana_atual']}) para o Diretor neste ciclo! Se precisares de mais, entra em contacto com a Diretoria.")
                                         block = True; break
                                     elif status_atual in ["DENTRO DO LIMITE", "⚠ EXCEÇÃO (ESTOURADO)", ""]:
-                                        st.error(f"⚠️ Atenção: O item {produto_selecionado} já está no teu carrinho na Aba 2 (Conferência) a aguardar envio. Vai até lá se precisares alterar a quantidade.")
+                                        st.error(f"⚠️️ Atenção: O item {produto_selecionado} já está no teu carrinho na Aba 2 (Conferência) a aguardar envio. Vai até lá se precisares alterar a quantidade.")
                                         block = True; break
                         
                         if st.button("➕ ADICIONAR À CONFERÊNCIA (VAI PARA ABA 2)", disabled=block, key="btn_grv"):
@@ -1151,7 +1161,7 @@ def interface_lancamento_proteina_filial(filial_passada="CENTRO"):
                                     st.cache_data.clear()
                                     time_lib.sleep(1)
                                     st.rerun()
-                        else: st.caption(f"ℹ️️ Nenhum pedido pendente de envio na filial {filial_selected}.")
+                        else: st.caption(f"ℹ️ Nenhum pedido pendente de envio na filial {filial_selected}.")
             except Exception as e_conf:
                 st.error(f"Erro ao processar lote: {e_conf}")
     except Exception as erro_modulo_compras: 

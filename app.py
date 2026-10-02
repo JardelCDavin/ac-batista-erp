@@ -15,7 +15,7 @@ from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
 from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
 import unicodedata
 
-# --- CONEXÃO INTELIGENTE COM O GOOGLE SHEETS (BLINDAGEM CONTRA TRAVAMENTOS) ---
+# --- CONEXÃO INTELIGENTE COM O GOOGLE SHEETS ---
 @st.cache_resource
 def inicializar_gspread():
     if 'gcp_service_account' in st.secrets:
@@ -30,7 +30,7 @@ def inicializar_gspread():
         
     raise ValueError("Nenhuma credencial do Google encontrada. Verifique o Streamlit Secrets ou o arquivo chave.json.")
 
-# --- BLINDAGEM DE API: MEMÓRIA DE CURTO PRAZO AMPLIADA (EVITA ERRO 429 DO GOOGLE) ---
+# --- BLINDAGEM DE API: MEMÓRIA DE CURTO PRAZO ---
 @st.cache_data(ttl=300)
 def buscar_dados_aba_cache(nome_aba):
     if 'client' in globals() and client is not None:
@@ -145,7 +145,7 @@ def carregar_catalogo_produtos_mapeamento():
         return cod_para_prod, prod_para_cod, sorted(list(set(lista_nomes))), precos_base_map
     except Exception: return {}, {}, ["COXA SOLTEIRA PILÃO KG", "LINGUIÇA SUÍNA CHURRASCO", "SASSAMI KG"], {}
 
-@st.cache_data(ttl=300)
+@st.cache_data(ttl=60)
 def carregar_de_para_fornecedores():
     dados = buscar_dados_aba_cache("DE_PARA_FORNECEDORES")
     mapeamento = {}
@@ -341,6 +341,7 @@ def encurtar_nome_fornecedor(nome_completo):
     partes = n.split()
     return partes[0].title() if partes else "Fornecedor"
 
+# --- TRATADOR EXCLUSIVO PARA PREÇOS (MANTÉM HEURÍSTICA DE CENTS) ---
 def tratar_preco_float(valor): 
     try: 
         if isinstance(valor, (int, float)): 
@@ -368,6 +369,23 @@ def tratar_preco_float(valor):
         elif num >= 40 and num < 100 and num % 1 == 0: 
             return num / 10.0
         return num
+    except: return 0.0
+
+# --- TRATADOR PURO PARA QUANTIDADES E PESOS (NÃO DIVIDE NÚMEROS REAIS) ---
+def tratar_qtd_float(valor):
+    try:
+        if isinstance(valor, (int, float)):
+            return float(valor)
+        v_str = str(valor).replace("R$", "").replace("kg", "").replace("KG", "").strip()
+        if not v_str or v_str.lower() == 'nan': return 0.0
+        if "," in v_str and "." in v_str:
+            if v_str.rfind(",") > v_str.rfind("."): 
+                v_str = v_str.replace(".", "").replace(",", ".")
+            else: 
+                v_str = v_str.replace(",", "")
+        elif "," in v_str and "." not in v_str: 
+            v_str = v_str.replace(",", ".")
+        return float(v_str)
     except: return 0.0
 
 def tratar_peso_float(valor):
@@ -484,7 +502,7 @@ def consolidar_proteina_semanal_geral(restaurante_filtro="Todos"):
         produto = str(linha.get("PRODUTO", "")).strip()
         try:
             val = linha.get("PEDIDO_NUTRICIONISTA", 0)
-            qtd = tratar_preco_float(val)
+            qtd = tratar_qtd_float(val) # CORRIGIDO: Usa tratar_qtd_float para não alterar o peso real
         except: qtd = 0.0
         if produto and qtd > 0:
             df_linhas.append({"Filial": filial_reg, "Proteína / Item": produto, "Quantidade Lançada (KG)": qtd, "Status": linha.get("STATUS_VALIDACAO", ""), "Justificativa da Nutricionista": linha.get("JUSTIFICATIVA", "")})
@@ -502,7 +520,7 @@ def consolidar_proteina_semanal_geral(restaurante_filtro="Todos"):
             d_sheets = aba_aud.get_all_records()
             cab_upper = [str(c).strip().upper() for c in aba_aud.row_values(1)]
             for _, r_ed in df_editado.iterrows():
-                f_v, p_v, q_v = str(r_ed["Filial"]).strip().upper(), str(r_ed["Proteína / Item"]).strip().upper(), tratar_preco_float(r_ed["Quantidade Lançada (KG)"])
+                f_v, p_v, q_v = str(r_ed["Filial"]).strip().upper(), str(r_ed["Proteína / Item"]).strip().upper(), tratar_qtd_float(r_ed["Quantidade Lançada (KG)"])
                 for idx_s, r_s in enumerate(d_sheets, start=2):
                     if str(r_s.get("RESTAURANTE", "")).strip().upper() == f_v and str(r_s.get("PRODUTO", "")).strip().upper() == p_v:
                         if "PEDIDO_NUTRICIONISTA" in cab_upper: aba_aud.update_cell(idx_s, cab_upper.index("PEDIDO_NUTRICIONISTA") + 1, f"{q_v:.3f}".replace(".", ","))
@@ -581,13 +599,13 @@ def modulo_cotacao_consolidacao():
                         df_validos = df_auditoria_total
 
                     if not df_validos.empty and all(c in df_validos.columns for c in ["PRODUTO", "RESTAURANTE", "PEDIDO_NUTRICIONISTA"]): 
-                        df_validos["PEDIDO_NUTRICIONISTA"] = df_validos["PEDIDO_NUTRICIONISTA"].apply(tratar_preco_float) 
+                        df_validos["PEDIDO_NUTRICIONISTA"] = df_validos["PEDIDO_NUTRICIONISTA"].apply(tratar_qtd_float) # CORRIGIDO: Usa tratar_qtd_float
                         df_grade_filiais = df_validos.pivot_table(index="PRODUTO", columns="RESTAURANTE", values="PEDIDO_NUTRICIONISTA", aggfunc="sum").fillna(0.0).reset_index() 
                         df_grade_filiais.columns.name = None 
                         colunas_restaurantes = [col for col in df_grade_filiais.columns if col != "PRODUTO"] 
                         df_grade_filiais["Volume Total (KG)"] = df_grade_filiais[colunas_restaurantes].sum(axis=1) 
                         st.dataframe(df_grade_filiais, hide_index=True, use_container_width=True) 
-                    else: st.info("ℹ Nenhum pedido aprovado na auditoria.") 
+                    else: st.info("ℹ️ Nenhum pedido aprovado na auditoria.") 
             except Exception as e: st.error(f"Erro: {e}")
         
         with aba_precos: 
@@ -602,7 +620,7 @@ def modulo_cotacao_consolidacao():
 
             if not df_mapa_completo.empty:
                 colunas_fornecedores = [col for col in df_mapa_completo.columns if col != "PRODUTO"]
-                if not colunas_fornecedores: st.info("ℹ️️ Nenhum fornecedor enviou propostas até o momento.")
+                if not colunas_fornecedores: st.info("ℹ️ Nenhum fornecedor enviou propostas até o momento.")
                 else:
                     df_mapa_completo["Menor R$/KG"] = df_mapa_completo[colunas_fornecedores].min(axis=1)
                     df_mapa_completo["Sugestão Sistema"] = df_mapa_completo[colunas_fornecedores].idxmin(axis=1)
@@ -656,7 +674,7 @@ def modulo_cotacao_consolidacao():
                                     r_ab.get("PEDIDO_NUM", ""),
                                     r_ab.get("FORNECEDOR", ""),
                                     r_ab.get("PRODUTO", ""),
-                                    tratar_preco_float(r_ab.get("QUANTIDADE", 0)),
+                                    tratar_qtd_float(r_ab.get("QUANTIDADE", 0)),
                                     tratar_preco_float(r_ab.get("VALOR_TOTAL", 0)),
                                     "FINALIZADO",
                                     r_ab.get("DATA_PREVISAO_ENTREGA", ""),
@@ -727,7 +745,7 @@ def modulo_cotacao_consolidacao():
                                 lista_carrinho = []
                                 for _, row_i in df_itens_filial.iterrows():
                                     produto_nome = str(row_i.get("PRODUTO", "")).strip()
-                                    qtd_nutri_original = tratar_preco_float(row_i.get("PEDIDO_NUTRICIONISTA", 0.0))
+                                    qtd_nutri_original = tratar_qtd_float(row_i.get("PEDIDO_NUTRICIONISTA", 0.0)) # CORRIGIDO
 
                                     vencedor_aba2 = forn_lista[0] if forn_lista else "FORNECEDOR PADRÃO"
                                     l_dec = df_dec[df_dec["PRODUTO"] == produto_nome]
@@ -776,7 +794,7 @@ def modulo_cotacao_consolidacao():
                                             linhas_espelho = []
                                             for _, row_item in df_f_pedidos.iterrows():
                                                 p_nome = row_item["Produto"]
-                                                p_qtd = tratar_preco_float(row_item["Qtd Solicitada"])
+                                                p_qtd = tratar_qtd_float(row_item["Qtd Solicitada"]) # CORRIGIDO
                                                 
                                                 preco_u = 0.0
                                                 l_dec = df_dec[df_dec["PRODUTO"] == p_nome]
@@ -852,7 +870,7 @@ def modulo_cotacao_consolidacao():
                                                                 f"{num_seq:04d}",
                                                                 forn_alvo,
                                                                 str(row_grv["Produto"]),
-                                                                f"{tratar_preco_float(row_grv['Qtd']):.3f}".replace(".", ","),
+                                                                f"{tratar_qtd_float(row_grv['Qtd']):.3f}".replace(".", ","),
                                                                 f"{tratar_preco_float(row_grv['Total']):.2f}".replace(".", ","),
                                                                 "ATIVO",
                                                                 str_prev_entrega,
@@ -1006,7 +1024,7 @@ def interface_lancamento_proteina_filial(filial_passada="CENTRO"):
                                     f"{pedido_sugerido:.3f}".replace(".", ","), 
                                     status_v, jst
                                 ])
-                                st.success("✔️ Adicionado! Vai para a Aba 2 para Conferir e Enviar ao Diretor.")
+                                st.success("✔️️ Adicionado! Vai para a Aba 2 para Conferir e Enviar ao Diretor.")
                                 st.cache_data.clear()
                                 time_lib.sleep(1)
                                 st.rerun()
@@ -1038,7 +1056,7 @@ def interface_lancamento_proteina_filial(filial_passada="CENTRO"):
                                 if col not in df_f.columns: df_f[col] = ""
                             df_ex = df_f[cols_necessarias].copy()
                             
-                            df_ex["PEDIDO_NUTRICIONISTA"] = df_ex["PEDIDO_NUTRICIONISTA"].apply(tratar_preco_float)
+                            df_ex["PEDIDO_NUTRICIONISTA"] = df_ex["PEDIDO_NUTRICIONISTA"].apply(tratar_qtd_float) # CORRIGIDO
                             df_ex.columns = ["Excluir?", "Produto", "Semana", "Qtd Solicitada (KG)", "Status", "Justificativa Operacional"]
                             
                             cfg = {
@@ -1166,7 +1184,7 @@ def modulo_compras_suprimentos():
                                         str(lista_valores[2]),
                                         str(lista_valores[3]),
                                         str(lista_valores[4]),
-                                        tratar_preco_float(lista_valores[5]),
+                                        tratar_qtd_float(lista_valores[5]), # CORRIGIDO
                                         tratar_preco_float(lista_valores[6]),
                                         "FINALIZADO",
                                         str(lista_valores[8]),
@@ -1269,7 +1287,7 @@ def modulo_compras_suprimentos():
                 for _, r_item in df_itens_digitados.iterrows():
                     c_int = str(r_item["Código Interno"]).strip()
                     p_desc = str(r_item["Produto / Descrição"]).strip()
-                    q_val = tratar_preco_float(r_item["Quantidade"])
+                    q_val = tratar_qtd_float(r_item["Quantidade"]) # CORRIGIDO
                     
                     if c_int and not p_desc:
                         p_desc = cod_para_prod.get(c_int, f"CÓDIGO {c_int}")
@@ -1290,7 +1308,7 @@ def modulo_compras_suprimentos():
                         })
 
                 if not linhas_validas_gravar:
-                    st.warning("⚠️️ Preenche pelo menos um item válido com código/produto e quantidade maior que zero.")
+                    st.warning("⚠️ Preenche pelo menos um item válido com código/produto e quantidade maior que zero.")
                 else:
                     try:
                         ws_ab = client.worksheet("PEDIDOS_ABERTOS")

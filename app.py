@@ -15,7 +15,7 @@ from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
 from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
 import unicodedata
 
-# --- CONEXÃO INTELIGENTE COM O GOOGLE SHEETS ---
+# --- CONEXÃO INTELIGENTE COM O GOOGLE SHEETS (CORREÇÃO STREAMLIT CLOUD) ---
 @st.cache_resource
 def inicializar_gspread():
     if 'gcp_service_account' in st.secrets:
@@ -717,11 +717,11 @@ def modulo_cotacao_consolidacao():
                     except Exception as e_automacao: st.error(f"Erro ao processar o arquivamento: {e_automacao}")
 
         # ==========================================
-        # ABA 3: CONFERÊNCIA & DISPARO (CORRIGIDO: O PREÇO ATUALIZA IMEDIATAMENTE AO TROCAR O FORNECEDOR)
+        # ABA 3: CONFERÊNCIA & DISPARO (PAINEL PERSISTENTE DE ESPELHOS E PDF)
         # ==========================================
         with aba_conferencia:
             st.markdown("### 📑 Espelho de Pedidos e Carrinho de Revisão")
-            st.caption("Revê o pedido, altera o fornecedor de destino na tabela (o preço unitário e o total atualizam instantaneamente), e gera o espelho oficial em PDF.")
+            st.caption("Revê o pedido, altera o fornecedor de destino na tabela (o preço unitário e o total atualizam instantaneamente), e gera os espelhos oficiais em PDF sem perder a visualização.")
             
             try:
                 dados_aud = buscar_dados_aba_cache("AUDITORIA_CONSOLIDADA")
@@ -765,8 +765,8 @@ def modulo_cotacao_consolidacao():
                                 
                                 st.markdown(f"#### 🛒 Carrinho Editável - {filial_selecionada_aba3}")
                                 
-                                # Chave única para guardar o estado do carrinho desta filial no session_state
                                 key_carrinho_state = f"carrinho_df_{filial_selecionada_aba3}"
+                                key_gerado_state = f"espelho_gerado_{filial_selecionada_aba3}"
                                 
                                 if key_carrinho_state not in st.session_state:
                                     lista_carrinho = []
@@ -795,7 +795,6 @@ def modulo_cotacao_consolidacao():
                                         })
                                     st.session_state[key_carrinho_state] = pd.DataFrame(lista_carrinho)
 
-                                # Renderiza o editor de dados conectado ao session_state
                                 df_carrinho_editado = st.data_editor(
                                     st.session_state[key_carrinho_state],
                                     column_config={
@@ -811,7 +810,6 @@ def modulo_cotacao_consolidacao():
                                     key=f"carrinho_edit_livre_{filial_selecionada_aba3}"
                                 )
 
-                                # Atualiza em tempo real os preços e totais com base na alteração de fornecedor ou quantidade
                                 mudou = False
                                 for i in range(len(df_carrinho_editado)):
                                     f_novo = df_carrinho_editado.loc[i, "Fornecedor Destino"]
@@ -844,18 +842,28 @@ def modulo_cotacao_consolidacao():
                                 
                                 if st.button(f"🖨️ Gerar Espelhos de Pedidos Oficiais para {filial_selecionada_aba3}", type="primary", use_container_width=True):
                                     itens_validos = df_carrinho_editado[(df_carrinho_editado["Excluir?"] == False) & (df_carrinho_editado["Qtd Solicitada (KG)"] > 0)]
-                                    
                                     if itens_validos.empty:
                                         st.warning("⚠️ Nenhum item no carrinho para emitir.")
+                                        st.session_state[key_gerado_state] = False
                                     else:
-                                        forn_unicos = itens_validos["Fornecedor Destino"].unique()
-                                        dicionario_filiais_sheets = carregar_dados_filiais_dict()
-                                        dados_filial = dicionario_filiais_sheets.get(filial_selecionada_aba3.upper(), {
-                                            "RAZAO": f"AC BATISTA - {filial_selecionada_aba3}", "CNPJ": "06.121.429/0001-18", "IE": "625274795.00.00", "ENDERECO": "SÃO JOÃO DEL REI/MG", "CEP": "36300-000", "EMAIL": "comprasacbatista@gmail.com"
-                                        })
+                                        st.session_state[key_gerado_state] = True
+                                        st.rerun()
 
-                                        for num_seq, forn_alvo in enumerate(forn_unicos, start=1):
-                                            df_f_pedidos = itens_validos[itens_validos["Fornecedor Destino"] == forn_alvo].copy()
+                                if st.session_state.get(key_gerado_state, False):
+                                    st.success("✅ Espelhos gerados com sucesso! Selecione o fornecedor abaixo para baixar o PDF ou disparar o pedido:")
+                                    
+                                    itens_validos_gerar = df_carrinho_editado[(df_carrinho_editado["Excluir?"] == False) & (df_carrinho_editado["Qtd Solicitada (KG)"] > 0)]
+                                    forn_unicos = itens_validos_gerar["Fornecedor Destino"].unique()
+                                    dicionario_filiais_sheets = carregar_dados_filiais_dict()
+                                    dados_filial = dicionario_filiais_sheets.get(filial_selecionada_aba3.upper(), {
+                                        "RAZAO": f"AC BATISTA - {filial_selecionada_aba3}", "CNPJ": "06.121.429/0001-18", "IE": "625274795.00.00", "ENDERECO": "SÃO JOÃO DEL REI/MG", "CEP": "36300-000", "EMAIL": "comprasacbatista@gmail.com"
+                                    })
+
+                                    abas_forn = st.tabs([f"📦 Fornecedor: {f}" for f in forn_unicos])
+                                    
+                                    for idx_f, forn_alvo in enumerate(forn_unicos):
+                                        with abas_forn[idx_f]:
+                                            df_f_pedidos = itens_validos_gerar[itens_validos_gerar["Fornecedor Destino"] == forn_alvo].copy()
                                             
                                             linhas_espelho = []
                                             for _, row_item in df_f_pedidos.iterrows():
@@ -872,17 +880,15 @@ def modulo_cotacao_consolidacao():
                                                 })
                                                 
                                             df_tabela_espelho = pd.DataFrame(linhas_espelho)
-                                            
                                             info_forn = prazos_entrega_forn.get(forn_alvo.upper(), {"telefone": "(32) 99999-9999", "dias_entrega": 3})
                                             tel_fornecedor = info_forn["telefone"]
                                             dias_uteis_entrega = info_forn["dias_entrega"]
                                             prazo_forn = prazos_reais.get(forn_alvo, "7/14 Dias")
-                                            
                                             data_prevista_auto = date.today() + timedelta(days=dias_uteis_entrega)
                                             
                                             with st.container(border=True):
-                                                st.markdown(f"### 👨‍🍳 Pedido Nº {num_seq:04d} para **{forn_alvo}** ({filial_selecionada_aba3})")
-                                                st.markdown(f"📞 **Telefone Fornecedor:** {tel_fornecedor} | 💳 **Prazo Pagamento:** {prazo_forn} | 🚚 **Previsão (Automática):** {data_prevista_auto.strftime('%d/%m/%Y')} (Prazo de {dias_uteis_entrega} dias)")
+                                                st.markdown(f"### 👨‍🍳 Pedido Nº {idx_f+1:04d} para **{forn_alvo}** ({filial_selecionada_aba3})")
+                                                st.markdown(f"📞 **Telefone:** {tel_fornecedor} | 💳 **Prazo:** {prazo_forn} | 🚚 **Previsão:** {data_prevista_auto.strftime('%d/%m/%Y')}")
                                                 
                                                 st.dataframe(df_tabela_espelho, use_container_width=True, hide_index=True, column_config={
                                                     "Preço Unit.": st.column_config.NumberColumn(format="R$ %.2f"),
@@ -891,10 +897,10 @@ def modulo_cotacao_consolidacao():
                                                 val_total_pedido = df_tabela_espelho["Total"].sum()
                                                 st.markdown(f"### **Valor Total do Pedido: R$ {val_total_pedido:,.2f}**")
                                                 
-                                                prev_entrega = st.date_input("Ajustar Data de Previsão de Entrega:", value=data_prevista_auto, key=f"prev_pdf_{filial_selecionada_aba3}_{num_seq}_{forn_alvo}", format="DD/MM/YYYY")
+                                                prev_entrega = st.date_input("Data de Previsão de Entrega:", value=data_prevista_auto, key=f"prev_pdf_{filial_selecionada_aba3}_{idx_f+1}_{forn_alvo}", format="DD/MM/YYYY")
                                                 
                                                 pdf_bytes = gerar_pdf_pedido(
-                                                    num_pedido=f"{num_seq:04d}",
+                                                    num_pedido=f"{idx_f+1:04d}",
                                                     filial_nome=filial_selecionada_aba3,
                                                     dados_filial=dados_filial,
                                                     forn_alvo=forn_alvo,
@@ -905,15 +911,15 @@ def modulo_cotacao_consolidacao():
                                                 )
                                                 
                                                 st.download_button(
-                                                    label=f"📥 Baixar Espelho em PDF (Pedido {num_seq:04d} - {forn_alvo})",
+                                                    label=f"📥 Baixar Espelho em PDF (Pedido {idx_f+1:04d} - {forn_alvo})",
                                                     data=pdf_bytes,
-                                                    file_name=f"Pedido_{num_seq:04d}_{forn_alvo}_{filial_selecionada_aba3}.pdf",
+                                                    file_name=f"Pedido_{idx_f+1:04d}_{forn_alvo}_{filial_selecionada_aba3}.pdf",
                                                     mime="application/pdf",
-                                                    key=f"dl_pdf_{filial_selecionada_aba3}_{num_seq}_{forn_alvo}"
+                                                    key=f"dl_pdf_{filial_selecionada_aba3}_{idx_f+1}_{forn_alvo}"
                                                 )
                                                 
                                                 st.write("")
-                                                if st.button(f"🚀 Disparar Pedido Oficial Nº {num_seq:04d} para {forn_alvo}", key=f"btn_disp_{filial_selecionada_aba3}_{num_seq}_{forn_alvo}", type="primary"):
+                                                if st.button(f"🚀 Disparar Pedido Oficial Nº {idx_f+1:04d} para {forn_alvo}", key=f"btn_disp_{filial_selecionada_aba3}_{idx_f+1}_{forn_alvo}", type="primary"):
                                                     try:
                                                         try:
                                                             ws_abertos = client.worksheet("PEDIDOS_ABERTOS")
@@ -928,7 +934,7 @@ def modulo_cotacao_consolidacao():
                                                             ws_abertos.append_row([
                                                                 ts_registro,
                                                                 filial_selecionada_aba3,
-                                                                f"{num_seq:04d}",
+                                                                f"{idx_f+1:04d}",
                                                                 forn_alvo,
                                                                 str(row_grv["Produto"]),
                                                                 f"{tratar_qtd_float(row_grv['Qtd']):.3f}".replace(".", ","),
@@ -937,7 +943,7 @@ def modulo_cotacao_consolidacao():
                                                                 str_prev_entrega,
                                                                 ""
                                                             ])
-                                                        st.success(f"✅ Pedido Nº {num_seq:04d} disparado e registado com sucesso na aba PEDIDOS_ABERTOS!")
+                                                        st.success(f"✅ Pedido Nº {idx_f+1:04d} disparado e registado com sucesso na aba PEDIDOS_ABERTOS!")
                                                         st.cache_data.clear()
                                                     except Exception as erro_aberto:
                                                         st.error(f"Erro ao guardar na base de pedidos abertos: {erro_aberto}")

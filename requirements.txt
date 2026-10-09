@@ -70,6 +70,8 @@ urllib3==2.7.0
 uvicorn==0.49.0
 watchdog==6.0.0
 websockets==16.0
+SQLAlchemy
+psycopg2-binary
 xlsxwriter==3.2.9
 gspread-dataframe
 reportlab

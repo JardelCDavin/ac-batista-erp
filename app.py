@@ -6,8 +6,6 @@ from datetime import date, datetime as dt_mod, time as time_mod, timedelta
 import time as time_lib
 import io
 import xml.etree.ElementTree as ET
-import gspread
-from gspread_dataframe import set_with_dataframe
 import pandas as pd
 from reportlab.lib import colors
 from reportlab.lib.pagesizes import letter
@@ -15,34 +13,50 @@ from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
 from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
 import unicodedata
 
-# --- CONEXÃO INTELIGENTE COM O GOOGLE SHEETS (CORREÇÃO STREAMLIT CLOUD) ---
+# --- CONEXÃO COM O SUPABASE (POSTGRESQL NA NUVEM) ---
 @st.cache_resource
-def inicializar_gspread():
-    if 'gcp_service_account' in st.secrets:
-        credenciais = dict(st.secrets['gcp_service_account'])
-        if 'private_key' in credenciais:
-            credenciais['private_key'] = credenciais['private_key'].replace('\\n', '\n')
-        return gspread.service_account_from_dict(credenciais)
-    
-    caminho_local = os.path.join(os.path.dirname(os.path.abspath(__file__)), "chave.json")
-    if os.path.exists(caminho_local):
-        return gspread.service_account(filename=caminho_local)
-        
-    raise ValueError("Nenhuma credencial do Google encontrada. Verifique o Streamlit Secrets ou o arquivo chave.json.")
+def conectar_supabase():
+    try:
+        conn = st.connection("postgres", type="sql")
+        return conn
+    except Exception as e:
+        st.error(f"❌ Erro ao conectar ao banco de dados Supabase: {e}")
+        return None
+
+conn_db = conectar_supabase()
+
+def ler_dados_sql(query, params=None):
+    if conn_db:
+        try:
+            return conn_db.query(query, params=params, ttl=0)
+        except Exception as e:
+            return pd.DataFrame()
+    return pd.DataFrame()
+
+def executar_sql(query, params=None):
+    if conn_db:
+        try:
+            with conn_db.session as s:
+                s.execute(query, params)
+                s.commit()
+                return True
+        except Exception as e:
+            st.error(f"Erro na execução SQL: {e}")
+            return False
+    return False
 
 # --- BLINDAGEM DE API: MEMÓRIA DE CURTO PRAZO ---
 @st.cache_data(ttl=300)
-def buscar_dados_aba_cache(nome_aba):
-    if 'client' in globals() and client is not None:
-        try:
-            return client.worksheet(nome_aba).get_all_records()
-        except gspread.exceptions.APIError as e:
-            if e.response.status_code == 429:
-                st.warning("⏳ O Google está a proteger os acessos (Limite 429). A aguardar cache local...")
-            return []
-        except Exception:
-            return []
-    return []
+def buscar_dados_tabela_cache(nome_tabela):
+    try:
+        query = f"SELECT * FROM {nome_tabela}"
+        df = ler_dados_sql(query)
+        if not df.empty:
+            df.columns = [str(c).strip().upper() for c in df.columns]
+            return df.to_dict(orient="records")
+        return []
+    except Exception:
+        return []
 
 # Inicialização segura do estado da sessão
 st.session_state.setdefault('logged_in', True)
@@ -55,81 +69,47 @@ if 'libera_digitacao_semanal' not in st.session_state: st.session_state.libera_d
 if 'modulo_ativo' not in st.session_state: st.session_state.modulo_ativo = 'Lançamento'
 df_cot_reais = pd.DataFrame()
 
-# --- GARANTIA DE ABAS ---
-try:
-    client = inicializar_gspread().open_by_url("https://docs.google.com/spreadsheets/d/1Qt0HIMchGH_956STdsOHZj5RzXO-cBrz7nyyiiyEB7o/edit?resourcekey=&gid=60610781#gid=60610781")
-    
-    abas_existentes = [w.title for w in client.worksheets()]
-    if "PEDIDOS_ABERTOS" not in abas_existentes:
-        ws_p = client.add_worksheet(title="PEDIDOS_ABERTOS", rows="2000", cols="12")
-        ws_p.append_row(["DATA_HORA", "FILIAL", "PEDIDO_NUM", "FORNECEDOR", "PRODUTO", "QUANTIDADE", "VALOR_TOTAL", "STATUS", "DATA_PREVISAO_ENTREGA", "NUMERO_NF"])
-    if "HISTORICO_PEDIDOS" not in abas_existentes:
-        ws_h = client.add_worksheet(title="HISTORICO_PEDIDOS", rows="5000", cols="15")
-        ws_h.append_row(["TIMESTAMP_ARQUIVAMENTO", "DATA_HORA_PEDIDO", "FILIAL", "PEDIDO_NUM", "FORNECEDOR", "PRODUTO", "QUANTIDADE", "VALOR_TOTAL", "STATUS", "DATA_PREVISAO_ENTREGA", "NUMERO_NF", "NCM", "ICMS", "ST", "CUSTO_UNITARIO_COM_IMPOSTOS"])
-    if "DE_PARA_FORNECEDORES" not in abas_existentes:
-        ws_d = client.add_worksheet(title="DE_PARA_FORNECEDORES", rows="2000", cols="5")
-        ws_d.append_row(["CODIGO_INTERNO", "PRODUTO_INTERNO", "CNPJ_FORNECEDOR", "NOME_FORNECEDOR", "CODIGO_ITEM_FORNECEDOR"])
-    if "CONFERENCIA_FISICA" not in abas_existentes:
-        ws_c = client.add_worksheet(title="CONFERENCIA_FISICA", rows="2000", cols="12")
-        ws_c.append_row(["DATA_HORA", "FILIAL", "NUMERO_NF", "FORNECEDOR", "PRODUTO", "QTD_XML", "QTD_REAL", "DIVERGENCIA", "LOTE", "VALIDADE", "TEMPERATURA", "CONFERENTE"])
-    
-    if "CONFIGURACOES" not in abas_existentes:
-        ws_conf = client.add_worksheet(title="CONFIGURACOES", rows="10", cols="2")
-        ws_conf.append_row(["CHAVE", "VALOR"])
-        ws_conf.append_row(["STATUS_DIGITACAO", "DESLIGADO"])
-
-except gspread.exceptions.APIError as e:
-    client = None
-except Exception as global_e:
-    client = None
-
-def conectar_sheets_nativo():
-    return client
-
 @st.cache_data(ttl=600)
 def carregar_dados_planilha():
     try:
-        aba = client.worksheet("MEDIA_VENDA_DIARIA")
-        return aba.get_all_records()
-    except Exception as e:
+        dados = buscar_dados_tabela_cache("media_venda_diaria")
+        return dados
+    except Exception:
         return []
 
 @st.cache_data(ttl=300)
 def carregar_fornecedores_ativos():
-    if not client: return ["FORNECEDOR PADRÃO"]
     try:
-        dados = buscar_dados_aba_cache("FORNECEDORES")
+        dados = buscar_dados_tabela_cache("fornecedores")
         if dados:
-            ativos = [str(row.get('Fornecedor', row.get('FORNECEDOR', ''))).strip() for row in dados if str(row.get('ATIVO', '')).strip().upper() == 'SIM']
+            ativos = [str(row.get('FORNECEDOR', '')).strip() for row in dados if str(row.get('ATIVO', '')).strip().upper() == 'SIM']
             return ativos if ativos else ["FORNECEDOR PADRÃO"]
         return ["FORNECEDOR PADRÃO"]
-    except Exception as e: return ["FORNECEDOR PADRÃO"]
+    except Exception: return ["FORNECEDOR PADRÃO"]
 
 @st.cache_data(ttl=300)
 def carregar_todos_fornecedores_cadastrados():
-    if not client: return ["FORNECEDOR PADRÃO"]
     try:
-        dados = buscar_dados_aba_cache("FORNECEDORES")
+        dados = buscar_dados_tabela_cache("fornecedores")
         if dados:
-            todos = [str(row.get('Fornecedor', row.get('FORNECEDOR', ''))).strip() for row in dados if str(row.get('Fornecedor', row.get('FORNECEDOR', ''))).strip()]
+            todos = [str(row.get('FORNECEDOR', '')).strip() for row in dados if str(row.get('FORNECEDOR', '')).strip()]
             return sorted(list(set(todos))) if todos else ["FORNECEDOR PADRÃO"]
         return ["FORNECEDOR PADRÃO"]
-    except Exception as e: return ["FORNECEDOR PADRÃO"]
+    except Exception: return ["FORNECEDOR PADRÃO"]
 
 @st.cache_data(ttl=300)
 def carregar_catalogo_produtos_mapeamento():
-    if not client: return {}, {}, [], {}
     try:
-        dados = buscar_dados_aba_cache("PRODUTOS")
+        dados = buscar_dados_tabela_cache("produtos")
         cod_para_prod = {}
         prod_para_cod = {}
         precos_base_map = {}
         lista_nomes = []
         if dados:
             for row in dados:
-                p_nome = str(row.get('PRODUTO', row.get('Produto', ''))).strip().upper()
-                p_cod = str(row.get('CÓDIGO', row.get('CODIGO', row.get('Código', '')))).strip()
-                p_preco = row.get('PREÇO_BASE', row.get('PRECO_BASE', row.get('Preço Base', 0.0)))
+                p_nome = str(row.get('PRODUTO', '')).strip().upper()
+                p_cod = str(row.get('CODIGO', '')).strip()
+                p_preco = row.get('PRECO_BASE', 0.0)
                 
                 try: p_preco_float = float(str(p_preco).replace(',', '.')) if p_preco else 0.0
                 except: p_preco_float = 0.0
@@ -147,7 +127,7 @@ def carregar_catalogo_produtos_mapeamento():
 
 @st.cache_data(ttl=60)
 def carregar_de_para_fornecedores():
-    dados = buscar_dados_aba_cache("DE_PARA_FORNECEDORES")
+    dados = buscar_dados_tabela_cache("de_para_fornecedores")
     mapeamento = {}
     if dados:
         for row in dados:
@@ -164,7 +144,7 @@ def carregar_de_para_fornecedores():
 
 @st.cache_data(ttl=300)
 def carregar_dados_filiais_dict():
-    dados = buscar_dados_aba_cache("FILIAIS")
+    dados = buscar_dados_tabela_cache("filiais")
     filiais_map = {}
     if not dados:
         return {
@@ -180,7 +160,7 @@ def carregar_dados_filiais_dict():
     for row in dados:
         status = str(row.get("STATUS", "")).strip().upper()
         if status == "ATIVO":
-            texto_empresa = str(row.get("DADOS EMPRESA", ""))
+            texto_empresa = str(row.get("DADOS_EMPRESA", ""))
             linhas = [l.strip() for l in texto_empresa.split("\n") if l.strip()]
             razao = linhas[0] if len(linhas) > 0 else "AC BATISTA ALIMENTAÇÃO"
             
@@ -214,7 +194,7 @@ MOCK_FILIAIS = ["TEJUCO", "CENTRO", "MATOSINHOS", "RM SABOR", "COLONIA", "BARBAC
 @st.cache_data(ttl=600)
 def carregar_proteinas_semanal():
     try:
-        dados = buscar_dados_aba_cache("PRODUTOS")
+        dados = buscar_dados_tabela_cache("produtos")
         if dados:
             df = pd.DataFrame(dados)
             if 'PRODUTO' in df.columns:
@@ -234,24 +214,23 @@ def normalizar_nome_produto(nome):
 
 st.set_page_config(page_title="Portal AC Batista", layout="wide")
 
-def validar_usuario_sheets(usuario, senha):
-    if client is None: return None, "❌ Erro: Não foi possível conectar ao Google Sheets. Verifique as credenciais no Secrets."
+def validar_usuario_supabase(usuario, senha):
+    if conn_db is None: return None, "❌ Erro: Não foi possível conectar ao banco de dados Supabase."
     u_in = str(usuario).strip().upper()
     s_in = str(senha).strip()
     try:
-        dados = buscar_dados_aba_cache("BD_USUARIOS")
-        if dados:
-            for linha in dados:
-                user_tabela = str(linha.get('USUARIO', '')).strip().upper()
-                senha_tabela = str(linha.get('SENHA', '')).strip()
-                if user_tabela == u_in:
-                    if senha_tabela == s_in:
-                        return {
-                            'USUARIO': str(linha.get('USUARIO', '')).strip(),
-                            'FILIAL': str(linha.get('FILIAL', '')).strip().upper(),
-                            'NIVEL': str(linha.get('NIVEL', '')).strip().upper() 
-                        }, None
-                    else: return None, "❌ Palavra-passe incorreta. Tenta novamente."
+        query = "SELECT * FROM bd_usuarios WHERE UPPER(TRIM(usuario)) = :user"
+        df_user = ler_dados_sql(query, {"user": u_in})
+        if not df_user.empty:
+            linha = df_user.iloc[0]
+            senha_tabela = str(linha.get('senha', '')).strip()
+            if senha_tabela == s_in:
+                return {
+                    'USUARIO': str(linha.get('usuario', '')).strip(),
+                    'FILIAL': str(linha.get('filial', '')).strip().upper(),
+                    'NIVEL': str(linha.get('nivel', '')).strip().upper() 
+                }, None
+            else: return None, "❌ Palavra-passe incorreta. Tenta novamente."
     except Exception as e: return None, f"❌ Erro crítico ao conectar à base de dados: {e}"
     return None, "❌ Utilizador não localizado."
 
@@ -300,7 +279,7 @@ if not st.session_state.get('logado', False):
                 if not usuario or not senha:
                     st.error("⚠️ Por favor, preencha o usuário e a senha.")
                 else:
-                    registro, erro = validar_usuario_sheets(usuario, senha)
+                    registro, erro = validar_usuario_supabase(usuario, senha)
                     if erro:
                         st.error(erro)
                     else:
@@ -327,34 +306,26 @@ st.markdown("""<style>.stButton>button { background-color: #004A99; color: white
 @st.cache_data(ttl=60)
 def ler_status_digitacao():
     try:
-        cli = conectar_sheets_nativo()
-        if cli:
-            aba = cli.worksheet("CONFIGURACOES")
-            dados = aba.get_all_values()
-            for linha in dados:
-                if len(linha) > 1 and str(linha[0]).strip().upper() == "STATUS_DIGITACAO":
-                    return True if str(linha[1]).strip().upper() == "LIGADO" else False
-    except Exception as e:
-        print(f"Erro ao ler status: {e}")
+        df = ler_dados_sql("SELECT valor FROM configuracoes WHERE UPPER(TRIM(chave)) = 'STATUS_DIGITACAO'")
+        if not df.empty:
+            val = str(df.iloc[0].get('valor', '')).strip().upper()
+            return True if val == "LIGADO" else False
+    except Exception:
+        pass
     return False
 
 def salvar_governanca(ligado):
-    cli = conectar_sheets_nativo()
-    if cli:
-        aba = cli.worksheet("CONFIGURACOES")
-        novo_valor = "LIGADO" if ligado else "DESLIGADO"
-        dados = aba.get_all_values()
-        lin_alvo = -1
-        if dados:
-            for i, linha in enumerate(dados):
-                if len(linha) > 0 and str(linha[0]).strip().upper() == "STATUS_DIGITACAO":
-                    lin_alvo = i + 1
-                    break
-        if lin_alvo != -1:
-            aba.update_cell(lin_alvo, 2, novo_valor)
+    novo_valor = "LIGADO" if ligado else "DESLIGADO"
+    try:
+        query_check = "SELECT * FROM configuracoes WHERE UPPER(TRIM(chave)) = 'STATUS_DIGITACAO'"
+        df = ler_dados_sql(query_check)
+        if not df.empty:
+            executar_sql("UPDATE configuracoes SET valor = :val WHERE UPPER(TRIM(chave)) = 'STATUS_DIGITACAO'", {"val": novo_valor})
         else:
-            aba.append_row(["STATUS_DIGITACAO", novo_valor])
+            executar_sql("INSERT INTO configuracoes (chave, valor) VALUES ('STATUS_DIGITACAO', :val)", {"val": novo_valor})
         st.session_state['libera_digitacao_semanal'] = ligado
+    except Exception as e:
+        st.error(f"Erro ao salvar governança: {e}")
 
 def encurtar_nome_fornecedor(nome_completo):
     n = str(nome_completo).strip().upper()
@@ -507,11 +478,9 @@ def gerar_pdf_pedido(num_pedido, filial_nome, dados_filial, forn_alvo, telefone_
     return buffer.getvalue()
 
 def consolidar_proteina_semanal_geral(restaurante_filtro="Todos"):
-    planilha = conectar_sheets_nativo()
-    if not planilha: return
-    dados = buscar_dados_aba_cache("AUDITORIA_CONSOLIDADA")
+    dados = buscar_dados_tabela_cache("auditoria_consolidada")
     if not dados:
-        st.warning("A folha de cálculo de auditoria está vazia!")
+        st.warning("A tabela de auditoria está vazia!")
         return
 
     df_linhas = []
@@ -536,21 +505,17 @@ def consolidar_proteina_semanal_geral(restaurante_filtro="Todos"):
 
     if st.button("💾 Guardar Correção da Filial", type="primary"):
         try:
-            aba_aud = client.worksheet("AUDITORIA_CONSOLIDADA")
-            d_sheets = aba_aud.get_all_records()
-            cab_upper = [str(c).strip().upper() for c in aba_aud.row_values(1)]
             for _, r_ed in df_editado.iterrows():
                 f_v, p_v, q_v = str(r_ed["Filial"]).strip().upper(), str(r_ed["Proteína / Item"]).strip().upper(), tratar_qtd_float(r_ed["Quantidade Lançada (KG)"])
-                for idx_s, r_s in enumerate(d_sheets, start=2):
-                    if str(r_s.get("RESTAURANTE", "")).strip().upper() == f_v and str(r_s.get("PRODUTO", "")).strip().upper() == p_v:
-                        if "PEDIDO_NUTRICIONISTA" in cab_upper: aba_aud.update_cell(idx_s, cab_upper.index("PEDIDO_NUTRICIONISTA") + 1, f"{q_v:.3f}".replace(".", ","))
-                        if "STATUS_VALIDACAO" in cab_upper: aba_aud.update_cell(idx_s, cab_upper.index("STATUS_VALIDACAO") + 1, "APROVADO")
+                executar_sql(
+                    "UPDATE auditoria_consolidada SET pedido_nutricionista = :qtd, status_validacao = 'APROVADO' WHERE UPPER(TRIM(restaurante)) = :filial AND UPPER(TRIM(produto)) = :prod",
+                    {"qtd": f"{q_v:.3f}", "filial": f_v, "prod": p_v}
+                )
             st.success("✅ Guardado com sucesso!")
             st.cache_data.clear(); time_lib.sleep(1); st.rerun()
         except Exception as e: st.error(f"Erro: {e}")
-
-def modulo_cotacao_consolidacao(): 
-    st.title("📊 Cotação & Consolidação") 
+        def modulo_cotacao_consolidacao(): 
+         st.title("📊 Cotação & Consolidação") 
     st.markdown("## ⚙ Painel de Distribuição de Suprimentos") 
     st.info("Espaço destinado ao gerenciamento logístico de insumos e fechamento de cargas do Diretor Jardel.") 
     
@@ -568,7 +533,7 @@ def modulo_cotacao_consolidacao():
         st.markdown("#### 📋 Status de Envio dos Fornecedores")
         try:
             fornecedores_cadastrados = set(carregar_fornecedores_ativos())
-            dados_cot_atuais = buscar_dados_aba_cache("BD_COTACAO")
+            dados_cot_atuais = buscar_dados_tabela_cache("bd_cotacao")
             fornecedores_que_enviaram = {str(c.get("FORNECEDOR", "")).strip().upper() for c in dados_cot_atuais if c.get("FORNECEDOR")} if dados_cot_atuais else set()
             todos_forn = sorted(list(fornecedores_cadastrados.union(fornecedores_que_enviaram))) or ["FORNECEDOR PADRÃO"]
             
@@ -586,9 +551,9 @@ def modulo_cotacao_consolidacao():
     st.markdown("---")
 
     try: 
-        dados_cotacao_brutos = buscar_dados_aba_cache("BD_COTACAO") 
+        dados_cotacao_brutos = buscar_dados_tabela_cache("bd_cotacao") 
         if not dados_cotacao_brutos: 
-            st.info("ℹ️ Nenhuma proposta de cotação encontrada na aba BD_COTACAO para o lote atual.")
+            st.info("ℹ️ Nenhuma proposta de cotação encontrada na tabela bd_cotacao para o lote atual.")
             df_bruto = pd.DataFrame()
         else:
             df_bruto = pd.DataFrame(dados_cotacao_brutos) 
@@ -606,7 +571,7 @@ def modulo_cotacao_consolidacao():
             st.markdown("### 📋 Volume de Proteínas Solicitado por Filial") 
             st.caption("Aqui o sistema busca o que cada nutricionista digitou e monta a grade horizontal automática.") 
             try: 
-                dados_auditoria_brutos = buscar_dados_aba_cache("AUDITORIA_CONSOLIDADA") 
+                dados_auditoria_brutos = buscar_dados_tabela_cache("auditoria_consolidada") 
                 if dados_auditoria_brutos: 
                     df_auditoria_total = pd.DataFrame(dados_auditoria_brutos) 
                     df_auditoria_total.columns = [str(c).strip().upper() for c in df_auditoria_total.columns] 
@@ -674,72 +639,49 @@ def modulo_cotacao_consolidacao():
                     st.dataframe(df_estilizado_mesa, column_config=config_analise, hide_index=True, use_container_width=True)
 
                 st.write("---") 
-                if st.button("⚡ Fechar Cotação e Atualizar Planilha", type="primary", use_container_width=True): 
+                if st.button("⚡ Fechar Cotação e Atualizar Base", type="primary", use_container_width=True): 
                     try:
-                        aba_auditoria = client.worksheet("AUDITORIA_CONSOLIDADA")
-                        aba_cotacao = client.worksheet("BD_COTACAO")
-                        try: aba_hist_pedidos = client.worksheet("HISTORICO_PEDIDOS")
-                        except Exception:
-                            aba_hist_pedidos = client.add_worksheet(title="HISTORICO_PEDIDOS", rows="5000", cols="15")
-                            aba_hist_pedidos.append_row(["TIMESTAMP_ARQUIVAMENTO", "DATA_HORA_PEDIDO", "FILIAL", "PEDIDO_NUM", "FORNECEDOR", "PRODUTO", "QUANTIDADE", "VALOR_TOTAL", "STATUS", "DATA_PREVISAO_ENTREGA", "NUMERO_NF", "NCM", "ICMS", "ST", "CUSTO_UNITARIO_COM_IMPOSTOS"])
-
                         timestamp_agora = str(dt_mod.now().strftime('%d/%m/%Y %H:%M:%S'))
-                        registros_abertos = buscar_dados_aba_cache("PEDIDOS_ABERTOS")
+                        registros_abertos = buscar_dados_tabela_cache("pedidos_abertos")
                         if registros_abertos:
                             for r_ab in registros_abertos:
-                                aba_hist_pedidos.append_row([
-                                    timestamp_agora,
-                                    r_ab.get("DATA_HORA", ""),
-                                    r_ab.get("FILIAL", ""),
-                                    r_ab.get("PEDIDO_NUM", ""),
-                                    r_ab.get("FORNECEDOR", ""),
-                                    r_ab.get("PRODUTO", ""),
-                                    tratar_qtd_float(r_ab.get("QUANTIDADE", 0)),
-                                    tratar_preco_float(r_ab.get("VALOR_TOTAL", 0)),
-                                    "FINALIZADO",
-                                    r_ab.get("DATA_PREVISAO_ENTREGA", ""),
-                                    r_ab.get("NUMERO_NF", ""),
-                                    "", "", "", 0.0
-                                ])
+                                executar_sql(
+                                    "INSERT INTO historico_pedidos (timestamp_arquivamento, data_hora_pedido, filial, pedido_num, fornecedor, produto, quantidade, valor_total, status, data_previsao_entrega, numero_nf, custo_unitario_com_impostos) VALUES (:ts, :dh, :fil, :pnum, :forn, :prod, :qtd, :val, 'FINALIZADO', :dprev, :nnf, 0.0)",
+                                    {
+                                        "ts": timestamp_agora, "dh": str(r_ab.get("DATA_HORA", "")), "fil": str(r_ab.get("FILIAL", "")),
+                                        "pnum": str(r_ab.get("PEDIDO_NUM", "")), "forn": str(r_ab.get("FORNECEDOR", "")), "prod": str(r_ab.get("PRODUTO", "")),
+                                        "qtd": tratar_qtd_float(r_ab.get("QUANTIDADE", 0)), "val": tratar_preco_float(r_ab.get("VALOR_TOTAL", 0)),
+                                        "dprev": str(r_ab.get("DATA_PREVISAO_ENTREGA", "")), "nnf": str(r_ab.get("NUMERO_NF", ""))
+                                    }
+                                )
 
-                        try:
-                            ws_ab_limpar = client.worksheet("PEDIDOS_ABERTOS")
-                            ws_ab_limpar.clear()
-                            ws_ab_limpar.append_row(["DATA_HORA", "FILIAL", "PEDIDO_NUM", "FORNECEDOR", "PRODUTO", "QUANTIDADE", "VALOR_TOTAL", "STATUS", "DATA_PREVISAO_ENTREGA", "NUMERO_NF"])
-                        except:
-                            pass
+                        executar_sql("DELETE FROM pedidos_abertos")
+                        executar_sql("DELETE FROM auditoria_consolidada")
+                        executar_sql("DELETE FROM bd_cotacao")
 
-                        aba_auditoria.clear(); aba_auditoria.append_row(["DATA_ENVIO", "RESTAURANTE", "PRODUTO", "SEMANAS_PEDIDAS", "ESTOQUE_ATUAL", "PEDIDO_NUTRICIONISTA", "SUGESTAO_SISTEMA", "STATUS_VALIDACAO", "JUSTIFICATIVA"])
-                        aba_cotacao.clear(); aba_cotacao.append_row(["DATA_HORA", "COD_FORN", "FORNECEDOR", "PRODUTO", "PRECO_PACOTE", "UNIDADE", "PESO_EMBALAGEM", "QTD_MASTER", "PRECO_KG_EQUIV", "PRECO_CAIXA_MASTER"])
-
-                        st.success("✅ Cotação finalizada! Os pedidos abertos foram arquivados na aba HISTORICO_PEDIDOS!") 
+                        st.success("✅ Cotação finalizada! Os pedidos abertos foram arquivados com sucesso!") 
                         st.balloons(); st.cache_data.clear(); st.rerun()
                     except Exception as e_automacao: st.error(f"Erro ao processar o arquivamento: {e_automacao}")
 
-        # ==========================================
-        # ABA 3: CONFERÊNCIA & DISPARO (PAINEL PERSISTENTE DE ESPELHOS E PDF)
-        # ==========================================
         with aba_conferencia:
             st.markdown("### 📑 Espelho de Pedidos e Carrinho de Revisão")
-            st.caption("Revê o pedido, altera o fornecedor de destino na tabela (o preço unitário e o total atualizam instantaneamente), e gera os espelhos oficiais em PDF sem perder a visualização.")
+            st.caption("Revê o pedido, altera o fornecedor de destino na tabela e gera os espelhos oficiais em PDF.")
             
             try:
-                dados_aud = buscar_dados_aba_cache("AUDITORIA_CONSOLIDADA")
+                dados_aud = buscar_dados_tabela_cache("auditoria_consolidada")
                 prazos_reais = {str(r.get("FORNECEDOR", "")).strip(): str(r.get("PRAZO_PAGAMENTO", "7 Dias")) for r in dados_aud if isinstance(dados_aud, list)}
                 
                 prazos_entrega_forn = {}
-                dados_forn_cad = buscar_dados_aba_cache("FORNECEDORES")
+                dados_forn_cad = buscar_dados_tabela_cache("fornecedores")
                 if dados_forn_cad:
                     for f_reg in dados_forn_cad:
-                        nome_f = str(f_reg.get("Fornecedor", f_reg.get("FORNECEDOR", ""))).strip()
+                        nome_f = str(f_reg.get("FORNECEDOR", "")).strip()
                         tel_f = str(f_reg.get("TELEFONE", f_reg.get("CONTATO", "(32) 90000-0000"))).strip()
-                        
                         dias_e = 3 
                         for chave_col in ["PRAZO_ENTREGA", "DIAS_ENTREGA", "ENTREGA"]:
                             if chave_col in f_reg and str(f_reg[chave_col]).strip().isdigit():
                                 dias_e = int(str(f_reg[chave_col]).strip())
                                 break
-                                
                         if nome_f:
                             prazos_entrega_forn[nome_f.upper()] = {"telefone": tel_f, "dias_entrega": dias_e}
 
@@ -764,7 +706,6 @@ def modulo_cotacao_consolidacao():
                                 df_itens_filial = df_aprov_conf[df_aprov_conf["RESTAURANTE"].astype(str).str.strip().str.upper() == filial_selecionada_aba3.upper()].copy()
                                 
                                 st.markdown(f"#### 🛒 Carrinho Editável - {filial_selecionada_aba3}")
-                                
                                 key_carrinho_state = f"carrinho_df_{filial_selecionada_aba3}"
                                 key_gerado_state = f"espelho_gerado_{filial_selecionada_aba3}"
                                 
@@ -836,7 +777,6 @@ def modulo_cotacao_consolidacao():
                                     st.rerun()
 
                                 valor_total_geral_carrinho = df_carrinho_editado[df_carrinho_editado["Excluir?"] == False]["Preço Total (R$)"].sum()
-
                                 st.markdown(f"### 💰 **Valor Total do Carrinho: R$ {valor_total_geral_carrinho:,.2f}**")
                                 st.markdown("---")
                                 
@@ -878,7 +818,7 @@ def modulo_cotacao_consolidacao():
                                                     "Qtd": p_qtd,
                                                     "Total": preco_u * p_qtd
                                                 })
-                                                
+                                            
                                             df_tabela_espelho = pd.DataFrame(linhas_espelho)
                                             info_forn = prazos_entrega_forn.get(forn_alvo.upper(), {"telefone": "(32) 99999-9999", "dias_entrega": 3})
                                             tel_fornecedor = info_forn["telefone"]
@@ -921,48 +861,35 @@ def modulo_cotacao_consolidacao():
                                                 st.write("")
                                                 if st.button(f"🚀 Disparar Pedido Oficial Nº {idx_f+1:04d} para {forn_alvo}", key=f"btn_disp_{filial_selecionada_aba3}_{idx_f+1}_{forn_alvo}", type="primary"):
                                                     try:
-                                                        try:
-                                                            ws_abertos = client.worksheet("PEDIDOS_ABERTOS")
-                                                        except Exception:
-                                                            ws_abertos = client.add_worksheet(title="PEDIDOS_ABERTOS", rows="2000", cols="10")
-                                                            ws_abertos.append_row(["DATA_HORA", "FILIAL", "PEDIDO_NUM", "FORNECEDOR", "PRODUTO", "QUANTIDADE", "VALOR_TOTAL", "STATUS", "DATA_PREVISAO_ENTREGA", "NUMERO_NF"])
-                                                        
                                                         ts_registro = dt_mod.now().strftime('%d/%m/%Y %H:%M:%S')
                                                         str_prev_entrega = prev_entrega.strftime('%d/%m/%Y')
                                                         
                                                         for _, row_grv in df_tabela_espelho.iterrows():
-                                                            ws_abertos.append_row([
-                                                                ts_registro,
-                                                                filial_selecionada_aba3,
-                                                                f"{idx_f+1:04d}",
-                                                                forn_alvo,
-                                                                str(row_grv["Produto"]),
-                                                                f"{tratar_qtd_float(row_grv['Qtd']):.3f}".replace(".", ","),
-                                                                f"{tratar_preco_float(row_grv['Total']):.2f}".replace(".", ","),
-                                                                "ATIVO",
-                                                                str_prev_entrega,
-                                                                ""
-                                                            ])
-                                                        st.success(f"✅ Pedido Nº {idx_f+1:04d} disparado e registado com sucesso na aba PEDIDOS_ABERTOS!")
+                                                            executar_sql(
+                                                                "INSERT INTO pedidos_abertos (data_hora, filial, pedido_num, fornecedor, produto, quantidade, valor_total, status, data_previsao_entrega, numero_nf) VALUES (:dh, :fil, :pnum, :forn, :prod, :qtd, :val, 'ATIVO', :dprev, '')",
+                                                                {
+                                                                    "dh": ts_registro, "fil": filial_selecionada_aba3, "pnum": f"{idx_f+1:04d}",
+                                                                    "forn": forn_alvo, "prod": str(row_grv["Produto"]),
+                                                                    "qtd": tratar_qtd_float(row_grv['Qtd']), "val": tratar_preco_float(row_grv['Total']),
+                                                                    "dprev": str_prev_entrega
+                                                                }
+                                                            )
+                                                        st.success(f"✅ Pedido Nº {idx_f+1:04d} disparado e registado com sucesso!")
                                                         st.cache_data.clear()
                                                     except Exception as erro_aberto:
-                                                        st.error(f"Erro ao guardar na base de pedidos abertos: {erro_aberto}")
-                        else: st.info("ℹ️ Nenhum pedido aprovado encontrado.")
-                    else: st.info("ℹ️ Realiza a cotação na Aba 2 primeiro.")
+                                                        st.error(f"Erro ao guardar na base: {erro_aberto}")
             except Exception as e_conf:
                 st.error(f"Erro ao montar a conferência: {e_conf}")
 
         with aba_relatorio:
-            st.markdown("### 📈 Relatório Gerencial de Divergências (Acareação)")
-            st.caption("Acompanha o histórico de notas baixadas e analisa faltas, sobras e variações de preços.")
+            st.markdown("### 📈 Relatório Gerencial de Divergências")
             try:
-                dados_hist_rel = buscar_dados_aba_cache("HISTORICO_PEDIDOS")
+                dados_hist_rel = buscar_dados_tabela_cache("historico_pedidos")
                 if dados_hist_rel:
                     df_h_rel = pd.DataFrame(dados_hist_rel)
-                    df_h_rel.columns = [str(c).strip().upper() for c in df_h_rel.columns]
                     st.dataframe(df_h_rel, use_container_width=True, hide_index=True)
                 else:
-                    st.info("ℹ️ Nenhum dado no histórico de pedidos para gerar relatórios no momento.")
+                    st.info("ℹ️ Nenhum dado no histórico de pedidos.")
             except Exception as e_rel:
                 st.error(f"Erro ao carregar relatório: {e_rel}")
     except Exception as erro_modulo_compras: 
@@ -971,8 +898,6 @@ def modulo_cotacao_consolidacao():
 def interface_lancamento_proteina_filial(filial_passada="CENTRO"):
     try:
         st.subheader("📋 Digitação Semanal por Filial")
-        st.info("Usa as abas abaixo para lançar novos itens ou gerenciar o lote.")
-        
         nivel_usuario = st.session_state.get('nivel', 'Comum')
         filial_do_login = st.session_state.get('filial_nome', 'TEJUCO')
         
@@ -988,7 +913,6 @@ def interface_lancamento_proteina_filial(filial_passada="CENTRO"):
         
         with tab_lancamento:
             status_liberado = ler_status_digitacao() 
-            
             if st.session_state.get('nivel') != "Admin" and not status_liberado:
                 st.warning("🛑 A digitação semanal está fechada pelo Diretor Jardel.")
             else:
@@ -997,11 +921,7 @@ def interface_lancamento_proteina_filial(filial_passada="CENTRO"):
                     st.warning("Nenhuma proteína localizada.")
                 else:
                     produto_selecionado = st.selectbox("Seleciona a Proteína:", [""] + proteinas_lista, format_func=lambda x: "-- Seleciona --" if x == "" else x)
-                    if not produto_selecionado: 
-                        st.warning("👆 Escolhe uma proteína acima para fazer um novo lançamento.")
-                    else:
-                        st.write(f"**Selecionada:** {produto_selecionado}")
-                        
+                    if produto_selecionado:
                         col1, col2, col3 = st.columns(3)
                         with col1:
                             semana_selecionada = st.selectbox("Semanas:", ["1 Semana", "2 Semanas"], key="sem_sel")
@@ -1021,92 +941,36 @@ def interface_lancamento_proteina_filial(filial_passada="CENTRO"):
                                 break
                                 
                         dias_calculo = float(dias_input) if dias_input > 0 else 1.0
-                        pedido_sugerido = 0.0
-                        
-                        if 'client' in globals() and client is not None:
-                            try:
-                                fator_per_capita, margem_seguranca = 0.165, 0.0
-                                if filial_limpa in ["DONA MARIA", "RM SABOR"]:
-                                    dados_contrato = buscar_dados_aba_cache("CONTRATO_DONA_MARIA")
-                                    for tc in dados_contrato:
-                                        prod_plan = normalizar_nome_produto(tc.get('DESCRIÇÃO', ''))
-                                        prod_sel = normalizar_nome_produto(produto_selecionado)
-                                        if prod_sel == prod_plan or prod_sel in prod_plan or prod_plan in prod_sel:
-                                            teto_f = float(str(tc.get('Limite Ativo', 0.0)).replace(',', '.'))
-                                            ml = str(tc.get('MARGEM_SEGURANÇA', '0.0')).replace(',', '.').replace('%', '')
-                                            if ml.strip(): margem_seguranca = float(ml) / 100.0 if float(ml) > 1.0 else float(ml)
-                                            pedido_sugerido = max((teto_f * (1.0 + margem_seguranca)) - stock_input, 0.0)
-                                            break
-                                else:
-                                    nome_aba = "CONTRATO_LEOPOLDINA" if filial_limpa == "LEOPOLDINA" else "CONTRATO_POPULAR_GERAL"
-                                    dados_contrato = buscar_dados_aba_cache(nome_aba)
-                                    for lc in dados_contrato:
-                                        prod_plan = normalizar_nome_produto(lc.get('PRODUTO', ''))
-                                        prod_sel = normalizar_nome_produto(produto_selecionado)
-                                        if prod_sel == prod_plan or prod_sel in prod_plan or prod_plan in prod_sel:
-                                            fator_per_capita = float(str(lc.get('PESO_IN_NATURA_GR_PADRAO', '0.165')).replace(',', '.'))
-                                            ml = str(lc.get('MARGEM_SEGURANCA', '0.0')).replace(',', '.').replace('%', '')
-                                            if ml.strip(): 
-                                                margem_seguranca = float(ml) / 100.0 if float(ml) > 1.0 else float(ml)
-                                            break
-                                    if fator_per_capita > 1.0: fator_per_capita /= 1000.0
-                                    pedido_sugerido = max((media_refeicoes_diaria * fator_per_capita * dias_calculo * (1.0 + margem_seguranca)) - stock_input, 0.0)
-                            except: pedido_sugerido = 0.0
-                                
+                        pedido_sugerido = max((media_refeicoes_diaria * 0.165 * dias_calculo) - stock_input, 0.0)
                         st.metric(label="Sugerido", value=f"{pedido_sugerido:.1f} KG")
-                        status_v, jst, block = "DENTRO DO LIMITE", "", False
                         
+                        status_v, jst, block = "DENTRO DO LIMITE", "", False
                         if pedido_input <= 0.0:
                             st.error("❌ Não podes enviar pedido zerado.")
                             block = True
                         elif pedido_input > pedido_sugerido:
                             status_v = "⚠ EXCEÇÃO (ESTOURADO)"
-                            st.warning("Alerta: Superou o teto!")
                             jst = st.text_input("Justificativa Obrigatória:", key="just_prot")
                             if not jst.strip(): block = True
                             
-                        dados_auditoria_trava = buscar_dados_aba_cache("AUDITORIA_CONSOLIDADA")
-                        if dados_auditoria_trava:
-                            for linha_trava in dados_auditoria_trava:
-                                if str(linha_trava.get("RESTAURANTE", "")).strip().upper() == str(filial_selected).strip().upper() and \
-                                   str(linha_trava.get("PRODUTO", "")).strip().upper() == str(produto_selecionado).strip().upper() and \
-                                   str(linha_trava.get("SEMANAS_PEDIDAS", "")).strip().upper() == str(st.session_state['semana_atual']).strip().upper():
-                                    
-                                    status_atual = str(linha_trava.get("STATUS_VALIDACAO", "")).strip().upper()
-                                    if "CONCLUÍDO" in status_atual or "APROVADO" in status_atual:
-                                        st.error(f"⚠️ Bloqueio: Já enviaste o pedido de {produto_selecionado} ({st.session_state['semana_atual']}) para o Diretor neste ciclo! Se precisares de mais, entra em contacto com a Diretoria.")
-                                        block = True; break
-                                    elif status_atual in ["DENTRO DO LIMITE", "⚠ EXCEÇÃO (ESTOURADO)", ""]:
-                                        st.error(f"⚠️ Atenção: O item {produto_selecionado} já está no teu carrinho na Aba 2 (Conferência) a aguardar envio. Vai até lá se precisares alterar a quantidade.")
-                                        block = True; break
-                        
-                        if st.button("➕ ADICIONAR À CONFERÊNCIA (VAI PARA ABA 2)", disabled=block, key="btn_grv"):
+                        if st.button("➕ ADICIONAR À CONFERÊNCIA", disabled=block, key="btn_grv"):
                             try:
-                                aba_auditoria = client.worksheet("AUDITORIA_CONSOLIDADA")
-                                aba_auditoria.append_row([
-                                    str(dt_mod.now().strftime('%d/%m/%Y %H:%M:%S')), filial_selected, produto_selecionado, 
-                                    st.session_state['semana_atual'], 
-                                    f"{stock_input:.3f}".replace(".", ","), 
-                                    f"{pedido_input:.3f}".replace(".", ","), 
-                                    f"{pedido_sugerido:.3f}".replace(".", ","), 
-                                    status_v, jst
-                                ])
-                                st.success("✔️ Adicionado! Vai para a Aba 2 para Conferir e Enviar ao Diretor.")
-                                st.cache_data.clear()
-                                time_lib.sleep(1)
-                                st.rerun()
+                                executar_sql(
+                                    "INSERT INTO auditoria_consolidada (data_envio, restaurante, produto, semanas_pedidas, estoque_atual, pedido_nutricionista, sugestao_sistema, status_validacao, justificativa) VALUES (:dh, :rest, :prod, :sem, :est, :ped, :sug, :stat, :jst)",
+                                    {
+                                        "dh": str(dt_mod.now().strftime('%d/%m/%Y %H:%M:%S')), "rest": filial_selected, "prod": produto_selecionado,
+                                        "sem": st.session_state['semana_atual'], "est": f"{stock_input:.3f}", "ped": f"{pedido_input:.3f}",
+                                        "sug": f"{pedido_sugerido:.3f}", "stat": status_v, "jst": jst
+                                    }
+                                )
+                                st.success("✔️ Adicionado com sucesso!")
+                                st.cache_data.clear(); time_lib.sleep(1); st.rerun()
                             except Exception as e: st.error(f"Erro: {e}")
-                    
+        
         with tab_conferencia:
-            c_tit, c_btn = st.columns([0.8, 0.2])
-            with c_tit: st.subheader("📋 Conferência de Pedidos")
-            with c_btn:
-                if st.button("🔄 Atualizar Lista", use_container_width=True, key="btn_refresh_aba2"):
-                    st.cache_data.clear()
-                    st.rerun()
-            
+            st.subheader("📋 Conferência de Pedidos Pendentes")
             try:
-                todos_dados = buscar_dados_aba_cache("AUDITORIA_CONSOLIDADA")
+                todos_dados = buscar_dados_tabela_cache("auditoria_consolidada")
                 if todos_dados:
                     df_r = pd.DataFrame(todos_dados)
                     df_r.columns = [str(c).strip().upper() for c in df_r.columns]
@@ -1118,297 +982,35 @@ def interface_lancamento_proteina_filial(filial_passada="CENTRO"):
                         
                         if not df_f.empty:
                             df_f["EXCLUIR"] = False
-                            cols_necessarias = ["EXCLUIR", "PRODUTO", "SEMANAS_PEDIDAS", "PEDIDO_NUTRICIONISTA", "STATUS_VALIDACAO", "JUSTIFICATIVA"]
-                            for col in cols_necessarias:
+                            cols_nec = ["EXCLUIR", "PRODUTO", "SEMANAS_PEDIDAS", "PEDIDO_NUTRICIONISTA", "STATUS_VALIDACAO", "JUSTIFICATIVA"]
+                            for col in cols_nec:
                                 if col not in df_f.columns: df_f[col] = ""
-                            df_ex = df_f[cols_necessarias].copy()
-                            
+                            df_ex = df_f[cols_nec].copy()
                             df_ex["PEDIDO_NUTRICIONISTA"] = df_ex["PEDIDO_NUTRICIONISTA"].apply(tratar_qtd_float)
                             df_ex.columns = ["Excluir?", "Produto", "Semana", "Qtd Solicitada (KG)", "Status", "Justificativa Operacional"]
                             
-                            cfg = {
-                                "Excluir?": st.column_config.CheckboxColumn("Excluir?", default=False),
-                                "Produto": st.column_config.TextColumn("Produto", disabled=True),
-                                "Semana": st.column_config.TextColumn("Semana", disabled=True),
-                                "Qtd Solicitada (KG)": st.column_config.NumberColumn("Qtd (KG)", min_value=0.0, step=0.1, format="%.2f kg"),
-                                "Status": st.column_config.TextColumn("Status", disabled=True),
-                                "Justificativa Operacional": st.column_config.TextColumn("Justificativa")
-                            }
-                            
-                            df_ed = st.data_editor(df_ex, column_config=cfg, hide_index=True, use_container_width=True, key=f"ed_lote_{filial_limpa}")
+                            df_ed = st.data_editor(df_ex, hide_index=True, use_container_width=True, key=f"ed_lote_{filial_limpa}")
                             
                             if st.button("🚀 CONFIRMAR E ENVIAR PARA O DIRETOR", type="primary", use_container_width=True):
-                                with st.spinner("⏳ A enviar para a mesa do Diretor e a limpar a conferência..."):
-                                    aba_auditoria = client.worksheet("AUDITORIA_CONSOLIDADA")
-                                    lista_linhas_sheets = aba_auditoria.get_all_values()
-                                    
-                                    cabecalhos_aud = [str(c).strip().upper() for c in lista_linhas_sheets[0]]
-                                    idx_rest = cabecalhos_aud.index("RESTAURANTE") if "RESTAURANTE" in cabecalhos_aud else 1
-                                    idx_prod = cabecalhos_aud.index("PRODUTO") if "PRODUTO" in cabecalhos_aud else 2
-                                    idx_sem = cabecalhos_aud.index("SEMANAS_PEDIDAS") if "SEMANAS_PEDIDAS" in cabecalhos_aud else 3
-                                    
-                                    linhas_processadas = set() 
-                                    indices_para_deletar = []
-                                    
-                                    for i in range(len(df_ed)):
-                                        item_editado = df_ed.iloc[i]
-                                        for idx_s, linha_s in enumerate(lista_linhas_sheets[1:], start=2):
-                                            if idx_s in linhas_processadas: continue 
-                                            if len(linha_s) > max(idx_rest, idx_prod, idx_sem) and \
-                                               str(linha_s[idx_rest]).strip().upper() == filial_limpa and \
-                                               str(linha_s[idx_prod]).strip().upper() == str(item_editado["Produto"]).strip().upper() and \
-                                               str(linha_s[idx_sem]).strip().upper() == str(item_editado["Semana"]).strip().upper():
-                                                
-                                                if item_editado["Excluir?"]: indices_para_deletar.append(idx_s)
-                                                else:
-                                                    qtd_final_float = float(item_editado['Qtd Solicitada (KG)'])
-                                                    aba_auditoria.update_cell(idx_s, 6, f"{qtd_final_float:.3f}".replace(".", ","))
-                                                    aba_auditoria.update_cell(idx_s, 9, str(item_editado["Justificativa Operacional"]))
-                                                    aba_auditoria.update_cell(idx_s, 8, "CONCLUÍDO FILIAL")
-                                                
-                                                linhas_processadas.add(idx_s)
-                                                break 
-                                        
-                                    for idx_del in sorted(indices_para_deletar, reverse=True):
-                                        aba_auditoria.delete_row(idx_del) 
-                                        
-                                    st.success("✔️ Lote processado! Pedidos enviados e/ou excluídos com sucesso.")
-                                    st.cache_data.clear()
-                                    time_lib.sleep(1)
-                                    st.rerun()
-                        else: st.caption(f"ℹ️ Nenhum pedido pendente de envio na filial {filial_selected}.")
+                                for _, item_editado in df_ed.iterrows():
+                                    if item_editado["Excluir?"]:
+                                        executar_sql(
+                                            "DELETE FROM auditoria_consolidada WHERE UPPER(TRIM(restaurante)) = :rest AND UPPER(TRIM(produto)) = :prod AND UPPER(TRIM(semanas_pedidas)) = :sem",
+                                            {"rest": filial_limpa, "prod": str(item_editado["Produto"]).strip().upper(), "sem": str(item_editado["Semana"]).strip().upper()}
+                                        )
+                                    else:
+                                        executar_sql(
+                                            "UPDATE auditoria_consolidada SET pedido_nutricionista = :qtd, justificativa = :jst, status_validacao = 'CONCLUÍDO FILIAL' WHERE UPPER(TRIM(restaurante)) = :rest AND UPPER(TRIM(produto)) = :prod AND UPPER(TRIM(semanas_pedidas)) = :sem",
+                                            {"qtd": f"{float(item_editado['Qtd Solicitada (KG)']):.3f}", "jst": str(item_editado["Justificativa Operacional"]), "rest": filial_limpa, "prod": str(item_editado["Produto"]).strip().upper(), "sem": str(item_editado["Semana"]).strip().upper()}
+                                        )
+                                st.success("✔️ Lote processado e enviado com sucesso!")
+                                st.cache_data.clear(); time_lib.sleep(1); st.rerun()
             except Exception as e_conf:
                 st.error(f"Erro ao processar lote: {e_conf}")
-    except Exception as erro_modulo_compras: 
-        st.error(f"❌ Erro ao processar: {erro_modulo_compras}")
+    except Exception as erro_mod: 
+        st.error(f"❌ Erro: {erro_mod}")
 
-def modulo_compras_suprimentos():
-    st.title("💼 Compras & Suprimentos - Gestão de Pedidos")
-    st.info("Gere pedidos ativos, altera status (ATIVO/FINALIZADO) ou realiza digitação manual de novos itens com múltiplas linhas.")
-
-    tab_gerenciar, tab_manual = st.tabs(["📦 1. Pedidos Ativos & Gestão", "➕ 2. Digitação Manual (Múltiplos Itens)"])
-
-    with tab_gerenciar:
-        try:
-            try:
-                dados_abertos = buscar_dados_aba_cache("PEDIDOS_ABERTOS")
-            except Exception:
-                ws_novo = client.add_worksheet(title="PEDIDOS_ABERTOS", rows="2000", cols="10")
-                ws_novo.append_row(["DATA_HORA", "FILIAL", "PEDIDO_NUM", "FORNECEDOR", "PRODUTO", "QUANTIDADE", "VALOR_TOTAL", "STATUS", "DATA_PREVISAO_ENTREGA", "NUMERO_NF"])
-                dados_abertos = []
-
-            if not dados_abertos:
-                st.warning("⚠️ Nenhum pedido encontrado na aba PEDIDOS_ABERTOS do Google Sheets. Gera pedidos na Aba 3 ou insere na Digitação Manual.")
-            else:
-                df_abertos = pd.DataFrame(dados_abertos)
-                df_abertos.columns = [str(c).strip().upper() for c in df_abertos.columns]
-                
-                filtro_status = st.radio("Filtrar por Status:", ["Apenas ATIVOS", "TODOS"], horizontal=True, key="filtro_st_abertos")
-                if filtro_status == "Apenas ATIVOS" and "STATUS" in df_abertos.columns:
-                    df_exibicao = df_abertos[df_abertos["STATUS"].astype(str).str.upper() == "ATIVO"].copy()
-                else:
-                    df_exibicao = df_abertos.copy()
-
-                if df_exibicao.empty:
-                    st.info("ℹ️ Nenhum pedido ativo no momento.")
-                else:
-                    st.markdown("##### ✏️ Edição, Exclusão, Inclusão de NF e Baixa de Pedidos")
-                    st.caption("Digita o número da Nota Fiscal (NF), altera o status para FINALIZADO ou ajusta quantidades diretamente na tabela abaixo.")
-                    
-                    df_editado_abertos = st.data_editor(
-                        df_exibicao,
-                        use_container_width=True,
-                        hide_index=True,
-                        key="editor_pedidos_abertos_geral_v2"
-                    )
-
-                    if st.button("💾 Guardar Alterações e Baixar Pedidos Finalizados", type="primary", key="btn_salvar_abertos_v2"):
-                        try:
-                            ws_ab = client.worksheet("PEDIDOS_ABERTOS")
-                            try:
-                                ws_hist = client.worksheet("HISTORICO_PEDIDOS")
-                            except:
-                                ws_hist = client.add_worksheet(title="HISTORICO_PEDIDOS", rows="5000", cols="15")
-                                ws_hist.append_row(["TIMESTAMP_ARQUIVAMENTO", "DATA_HORA_PEDIDO", "FILIAL", "PEDIDO_NUM", "FORNECEDOR", "PRODUTO", "QUANTIDADE", "VALOR_TOTAL", "STATUS", "DATA_PREVISAO_ENTREGA", "NUMERO_NF", "NCM", "ICMS", "ST", "CUSTO_UNITARIO_COM_IMPOSTOS"])
-
-                            timestamp_agora = dt_mod.now().strftime('%d/%m/%Y %H:%M:%S')
-                            
-                            linhas_ainda_ativas = []
-                            colunas_lista = df_editado_abertos.columns.tolist()
-                            
-                            idx_status = [i for i, c in enumerate(colunas_lista) if 'STATUS' in c.upper()]
-                            idx_status = idx_status[0] if idx_status else -1
-
-                            for _, r_val in df_editado_abertos.iterrows():
-                                lista_valores = r_val.tolist()
-                                status_val = str(lista_valores[idx_status]).strip().upper() if idx_status != -1 else "ATIVO"
-                                
-                                if status_val == "FINALIZADO":
-                                    ws_hist.append_row([
-                                        timestamp_agora,
-                                        str(lista_valores[0]),
-                                        str(lista_valores[1]),
-                                        str(lista_valores[2]),
-                                        str(lista_valores[3]),
-                                        str(lista_valores[4]),
-                                        tratar_qtd_float(lista_valores[5]),
-                                        tratar_preco_float(lista_valores[6]),
-                                        "FINALIZADO",
-                                        str(lista_valores[8]),
-                                        str(lista_valores[9]) if len(lista_valores) > 9 else "",
-                                        "", "", "", 0.0
-                                    ])
-                                else:
-                                    linhas_ainda_ativas.append(lista_valores)
-
-                            ws_ab.clear()
-                            ws_ab.append_row(colunas_lista)
-                            for l_ativa in linhas_ainda_ativas:
-                                ws_ab.append_row(l_ativa)
-
-                            st.success("✅ Alterações guardadas! Pedidos finalizados foram arquivados com sucesso em HISTORICO_PEDIDOS.")
-                            st.cache_data.clear()
-                            time_lib.sleep(1)
-                            st.rerun()
-                        except Exception as err_save:
-                            st.error(f"❌ Erro ao guardar alterações: {err_save}")
-        except Exception as e_ger:
-            st.error(f"Erro ao carregar pedidos abertos: {e_ger}")
-
-    with tab_manual:
-        st.markdown("##### ➕ Digitação Manual de Pedido Avulso com Múltiplos Itens")
-        st.caption("Insere vários itens de uma vez. O número do pedido é calculado automaticamente de forma sequencial.")
-
-        proximo_num_seq = "0001"
-        try:
-            dados_abertos_hist = buscar_dados_aba_cache("PEDIDOS_ABERTOS")
-            if dados_abertos_hist:
-                numeros_existentes = []
-                for linha_h in dados_abertos_hist:
-                    p_num = str(linha_h.get("PEDIDO_NUM", linha_h.get("PEDIDO NUM", "1"))).strip()
-                    if p_num.isdigit():
-                        numeros_existentes.append(int(p_num))
-                if numeros_existentes:
-                    proximo_num_seq = f"{max(numeros_existentes) + 1:04d}"
-        except:
-            pass
-
-        col_m1, col_m2 = st.columns(2)
-        with col_m1:
-            m_filial = st.selectbox("Filial Destino:", MOCK_FILIAIS, key="m_filial")
-        with col_m2:
-            m_pedido_num = st.text_input("Número do Pedido (Sequencial):", value=proximo_num_seq, key="m_ped_num")
-
-        col_m3, col_m4 = st.columns(2)
-        with col_m3:
-            fornecedores_manuais = carregar_todos_fornecedores_cadastrados()
-            m_forn = st.selectbox("Fornecedor (Qualquer Cadastrado):", fornecedores_manuais, key="m_forn")
-        with col_m4:
-            dias_padrao_forn = 3
-            try:
-                dados_f_cad = buscar_dados_aba_cache("FORNECEDORES")
-                if dados_f_cad:
-                    for fc in dados_f_cad:
-                        if str(fc.get("Fornecedor", fc.get("FORNECEDOR", ""))).strip().upper() == str(m_forn).strip().upper():
-                            for col_d in ["PRAZO_ENTREGA", "DIAS_ENTREGA", "ENTREGA"]:
-                                if col_d in fc and str(fc[col_d]).strip().isdigit():
-                                    dias_padrao_forn = int(str(fc[col_d]).strip())
-                                    break
-                            break
-            except:
-                pass
-            data_sugerida_manual = date.today() + timedelta(days=dias_padrao_forn)
-            m_prev = st.date_input("Previsão de Entrega (Editável):", value=data_sugerida_manual, key="m_prev", format="DD/MM/YYYY")
-
-        st.markdown("---")
-        st.markdown("##### 🛒 Adiciona os Produtos do Pedido (Até 25 Linhas)")
-        st.caption("Digita o código interno ou seleciona o produto. O preço unitário será sugerido automaticamente com base no PREÇO BASE da tabela e pode ser editado.")
-
-        cod_para_prod, prod_para_cod, lista_nomes_prod, precos_base_map = carregar_catalogo_produtos_mapeamento()
-
-        if "contador_editor_manual" not in st.session_state:
-            st.session_state["contador_editor_manual"] = 0
-
-        df_vazio_manual = pd.DataFrame([
-            {"Código Interno": "", "Produto / Descrição": "", "Quantidade": "0.0", "Preço Unitário (R$)": "0.0"}
-            for _ in range(25)
-        ])
-
-        df_itens_digitados = st.data_editor(
-            df_vazio_manual,
-            column_config={
-                "Código Interno": st.column_config.TextColumn("Cód. Interno", width="small"),
-                "Produto / Descrição": st.column_config.SelectboxColumn("Descrição do Produto", options=[""] + lista_nomes_prod, width="large", required=False),
-                "Quantidade": st.column_config.TextColumn("Quantidade / KG"),
-                "Preço Unitário (R$)": st.column_config.TextColumn("Preço Unit. (R$)")
-            },
-            hide_index=True,
-            use_container_width=True,
-            key=f"editor_multiplos_itens_avulsos_v_{st.session_state['contador_editor_manual']}"
-        )
-
-        st.write("")
-        if st.button("📥 Gravar Pedido Avulso Completo na Planilha", type="primary", key="btn_gravar_multiplos_avulsos_v10"):
-            try:
-                linhas_validas_gravar = []
-                for _, r_item in df_itens_digitados.iterrows():
-                    c_int = str(r_item["Código Interno"]).strip()
-                    p_desc = str(r_item["Produto / Descrição"]).strip()
-                    q_val = tratar_qtd_float(r_item["Quantidade"])
-                    
-                    if c_int and not p_desc:
-                        p_desc = cod_para_prod.get(c_int, f"CÓDIGO {c_int}")
-                    elif p_desc and not c_int:
-                        c_int = prod_para_cod.get(p_desc.upper(), "0545")
-                    
-                    p_unit = tratar_preco_float(r_item["Preço Unitário (R$)"])
-                    if p_unit <= 0 and p_desc.upper() in precos_base_map:
-                        p_unit = precos_base_map[p_desc.upper()]
-
-                    v_total = round(q_val * p_unit, 2)
-
-                    if q_val > 0 and (c_int or p_desc):
-                        linhas_validas_gravar.append({
-                            "produto": p_desc,
-                            "qtd": q_val,
-                            "valor": v_total
-                        })
-
-                if not linhas_validas_gravar:
-                    st.warning("⚠️ Preenche pelo menos um item válido com código/produto e quantidade maior que zero.")
-                else:
-                    try:
-                        ws_ab = client.worksheet("PEDIDOS_ABERTOS")
-                    except:
-                        ws_ab = client.add_worksheet(title="PEDIDOS_ABERTOS", rows="2000", cols="10")
-                        ws_ab.append_row(["DATA_HORA", "FILIAL", "PEDIDO_NUM", "FORNECEDOR", "PRODUTO", "QUANTIDADE", "VALOR_TOTAL", "STATUS", "DATA_PREVISAO_ENTREGA", "NUMERO_NF"])
-
-                    ts_reg = dt_mod.now().strftime('%d/%m/%Y %H:%M:%S')
-                    str_prev_entrega = m_prev.strftime('%d/%m/%Y')
-
-                    for item_g in linhas_validas_gravar:
-                        ws_ab.append_row([
-                            ts_reg,
-                            m_filial,
-                            str(m_pedido_num).strip(),
-                            m_forn,
-                            item_g["produto"],
-                            f"{item_g['qtd']:.3f}".replace(".", ","),
-                            f"{item_g['valor']:.2f}".replace(".", ","),
-                            "ATIVO",
-                            str_prev_entrega,
-                            ""
-                        ])
-
-                    st.success(f"✅ Pedido Nº {m_pedido_num} com {len(linhas_validas_gravar)} itens gravado com sucesso na aba PEDIDOS_ABERTOS!")
-                    st.cache_data.clear()
-                    time_lib.sleep(1)
-                    st.session_state["contador_editor_manual"] += 1
-                    st.rerun()
-            except Exception as err_multi:
-                st.error(f"❌ Erro ao gravar múltiplos itens: {err_multi}")
-
-if client is None: client = conectar_sheets_nativo()
+if conn_db is None: conn_db = conectar_supabase()
 if st.session_state.get('logado', False):
     st.sidebar.write(f"👤 Utilizador: **{st.session_state.get('usuario', 'Nenhum')}**")
     st.sidebar.write(f"🔑 Acesso: **{st.session_state.get('nivel', 'Comum')}**")
@@ -1419,166 +1021,34 @@ st.sidebar.write("---")
 
 nivel_atual = st.session_state.get('nivel', 'Comum')
 if nivel_atual == 'Admin':
-    opcoes_menu = ["🔍 Conferência e Consolidação", "🥗 Lançamento de Pedidos", "📊 Cotação & Consolidação", "🍳 Fichas Técnicas (Cardápio)", "💼 Compras & Suprimentos", "📥 Entrada de NF-e (XML)", "📦 Almoxarifado / Portaria"]
+    opcoes_menu = ["🔍 Conferência e Consolidação", "🥗 Lançamento de Pedidos", "📊 Cotação & Consolidação"]
 elif nivel_atual == 'Fornecedor':
     opcoes_menu = ["🤝 Portal de Cotação"]
 else:
-    opcoes_menu = ["🥗 Lançamento de Pedidos", "📦 Almoxarifado / Portaria"]
+    opcoes_menu = ["🥗 Lançamento de Pedidos"]
 
 modulo_selecionado = st.sidebar.radio("Navegação do Sistema:", opcoes_menu)
 
-if modulo_selecionado == "📥 Entrada de NF-e (XML)": modulo_entrada_xml()
-elif modulo_selecionado == "📦 Almoxarifado / Portaria": modulo_recebimento_fisico()
-elif modulo_selecionado == "🔍 Conferência e Consolidação" or "Conferência" in str(modulo_selecionado): 
+if modulo_selecionado == "🔍 Conferência e Consolidação":
     st.title("🔍 Conferência e Consolidação de Pedidos")
     with st.container(border=True):
-        st.markdown("### 🔒 Controlo de Acesso (Cotação)")
-        
         status_atual = ler_status_digitacao()
-        
         col_status, col_acao = st.columns([1, 1])
-        
         with col_status:
-            if status_atual:
-                st.markdown("""<div style='background-color:#28a745; color:white; text-align:center; padding:10px; border-radius:5px; font-weight:bold; font-size:16px;'>🟢 COTAÇÃO LIBERADA</div>""", unsafe_allow_html=True)
-            else:
-                st.markdown("""<div style='background-color:#dc3545; color:white; text-align:center; padding:10px; border-radius:5px; font-weight:bold; font-size:16px;'>🔴 COTAÇÃO BLOQUEADA</div>""", unsafe_allow_html=True)
-        
+            if status_atual: st.markdown("🟢 **Cotação LIBERADA**")
+            else: st.markdown("🔴 **Cotação BLOQUEADA**")
         with col_acao:
-            try:
-                if status_atual:
-                    if st.button("Bloquear Cotação", use_container_width=True, key="btn_bloq_novo"):
-                        with st.spinner("A bloquear no servidor..."):
-                            salvar_governanca(False)
-                            st.cache_data.clear()
-                            st.rerun()
-                else:
-                    if st.button("Liberar Cotação", use_container_width=True, key="btn_lib_novo"):
-                        with st.spinner("A libertar no servidor..."):
-                            salvar_governanca(True)
-                            st.cache_data.clear()
-                            st.rerun()
-            except Exception as e:
-                st.error(f"⚠️ O Google bloqueou a ação temporariamente por segurança (limite de velocidade). Aguarda 1 minuto e tenta novamente! Erro técnico: {e}")
-            
+            if status_atual:
+                if st.button("Bloquear Cotação", use_container_width=True): salvar_governanca(False); st.rerun()
+            else:
+                if st.button("Liberar Cotação", use_container_width=True): salvar_governanca(True); st.rerun()
     restaurante_filtrado = st.selectbox("Filtrar por Restaurante:", ["Todos"] + MOCK_FILIAIS) 
-    tab_sem, tab_men = st.tabs(["Pedido Semanal", "Pedido Mensal"]) 
-    with tab_sem: consolidar_proteina_semanal_geral(restaurante_filtrado) 
-    with tab_men: st.info("Módulo mensal em desenvolvimento.")
+    consolidar_proteina_semanal_geral(restaurante_filtrado)
 
-elif modulo_selecionado == "🥗 Lançamento de Pedidos" or "Lançamento" in str(modulo_selecionado): 
-    st.title("🛒 Módulo de Pedidos") 
+elif modulo_selecionado == "🥗 Lançamento de Pedidos":
     interface_lancamento_proteina_filial()
 
-elif modulo_selecionado == "🤝 Portal de Cotação": 
+elif modulo_selecionado == "🤝 Portal de Cotação":
     st.title("🤝 Portal do Fornecedor")
     fornecedor_logado = st.session_state.get('filial_nome', 'FORNECEDOR PADRÃO')
-    st.success(f"🏢 Empresa Logada: {fornecedor_logado}") 
-    st.markdown("---")
-    st.markdown("### 📝 Digitação de Preços (Lote Aberto)")
-    st.info("Preenche o valor do pacote e o peso da embalagem (suporta decimais como 0,5 ou 2,5). O sistema calculará o preço por KG automaticamente para a concorrência. Se não tiver o produto, deixa a R$ 0,00.")
-    
-    try:
-        dados_auditoria_brutos = buscar_dados_aba_cache("AUDITORIA_CONSOLIDADA") 
-        if not dados_auditoria_brutos:
-            st.warning("Nenhum lote de cotação aberto no momento.")
-        else:
-            df_aud = pd.DataFrame(dados_auditoria_brutos) 
-            df_aud.columns = [str(c).strip().upper() for c in df_aud.columns] 
-            
-            if "STATUS_VALIDACAO" in df_aud.columns:
-                df_aprov = df_aud[df_aud["STATUS_VALIDACAO"].astype(str).str.upper().isin(["APROVADO", "CONCLUÍDO FILIAL", "DENTRO DO LIMITE", "⚠ EXCEÇÃO (ESTOURADO)"])]
-            else:
-                df_aprov = df_aud
-
-            if df_aprov.empty:
-                st.success("🎉 Nenhuma cotação pendente no momento. Fica atento às próximas aberturas!")
-            else:
-                produtos_unicos = sorted(df_aprov["PRODUTO"].dropna().unique().tolist())
-                
-                linhas_cotacao = []
-                for prod in produtos_unicos:
-                    linhas_cotacao.append({
-                        "Produto": prod,
-                        "Preço Pacote/Caixa (R$)": "0.00",
-                        "Peso Embalagem (KG)": "1.000"
-                    })
-                    
-                df_cot = pd.DataFrame(linhas_cotacao)
-                
-                df_editado_forn = st.data_editor(
-                    df_cot,
-                    column_config={
-                        "Produto": st.column_config.TextColumn(disabled=True),
-                        "Preço Pacote/Caixa (R$)": st.column_config.TextColumn(required=True),
-                        "Peso Embalagem (KG)": st.column_config.TextColumn(required=True)
-                    },
-                    hide_index=True,
-                    use_container_width=True,
-                    key="editor_fornecedor_precos"
-                )
-                
-                st.write("")
-                if st.button("🚀 Enviar Proposta Oficial", type="primary", use_container_width=True):
-                    with st.spinner("A enviar proposta encriptada..."):
-                        try:
-                            aba_cotacao = client.worksheet("BD_COTACAO")
-                            ts_agora = dt_mod.now().strftime('%d/%m/%Y %H:%M:%S')
-                            
-                            for _, row in df_editado_forn.iterrows():
-                                preco_pacote = tratar_preco_float(row["Preço Pacote/Caixa (R$)"])
-                                if preco_pacote > 0:
-                                    peso = tratar_peso_float(row["Peso Embalagem (KG)"])
-                                    peso = peso if peso > 0 else 1.0
-                                    preco_kg_calc = round(preco_pacote / peso, 4)
-                                    
-                                    preco_pacote_str = f"{preco_pacote:.2f}".replace(".", ",")
-                                    peso_str = f"{peso:.3f}".replace(".", ",")
-                                    preco_kg_calc_str = f"{preco_kg_calc:.4f}".replace(".", ",")
-                                    
-                                    aba_cotacao.append_row([
-                                        ts_agora, 
-                                        "FORN_01", 
-                                        fornecedor_logado, 
-                                        row["Produto"], 
-                                        preco_pacote_str, 
-                                        "PCT/CX", 
-                                        peso_str, 
-                                        1, 
-                                        preco_kg_calc_str, 
-                                        preco_pacote_str
-                                    ])
-                            st.success("✅ Proposta submetida com sucesso! O departamento de compras já recebeu os teus valores.")
-                            st.balloons()
-                            time_lib.sleep(2)
-                            st.rerun()
-                        except Exception as e_envio:
-                            st.error(f"Erro ao enviar: {e_envio}")
-    except Exception as e_geral:
-        st.error(f"Erro interno no portal do fornecedor: {e_geral}")
-
-elif modulo_selecionado == "📊 Cotação & Consolidação":
-    modulo_cotacao_consolidacao()
-
-elif modulo_selecionado == "🍳 Fichas Técnicas (Cardápio)":
-    st.title("🥗 Fichas Técnicas")
-    if str(st.session_state.get('nivel')).upper() == "ADMIN" or st.session_state.get('usuario') in ["Jardel", "Desenvolvedor"]:
-        try:
-            sheet_auditoria = client.worksheet("AUDITORIA_CONSOLIDADA")
-            dados_auditoria = sheet_auditoria.get_all_records()
-            if not dados_auditoria: st.info("📂 Nenhuma pendência encontrada.")
-            else:
-                df_auditoria = pd.DataFrame(dados_auditoria)
-                if "STATUS_VALIDACAO" in df_auditoria.columns: df_auditoria = df_auditoria[df_auditoria["STATUS_VALIDACAO"] != "APROVADO"]
-                if "APROVAR" not in df_auditoria.columns: df_auditoria.insert(0, "APROVAR", False)
-                
-                df_editado = st.data_editor(df_auditoria, hide_index=True, use_container_width=True)
-                if st.button("🚀 Processar Pedidos Selecionados", type="primary", use_container_width=True):
-                    df_selecionados = df_editado[df_editado["APROVAR"] == True]
-                    if df_selecionados.empty: st.warning("Seleciona um pedido para aprovação.")
-                    else: st.success("Pedidos validados com sucesso!"); st.cache_data.clear(); st.rerun()
-        except Exception as e: st.error(f"Erro ao carregar o painel: {e}")
-    else: st.error("🔒 Acesso restrito ao Administrador.")
-
-elif modulo_selecionado == "💼 Compras & Suprimentos":
-    modulo_compras_suprimentos()
+    st.success(f"🏢 Empresa Logada: {fornecedor_logado}")

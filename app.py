@@ -13,6 +13,9 @@ from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
 from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
 import unicodedata
 
+# --- CONFIGURAÇÃO DA PÁGINA ---
+st.set_page_config(page_title="Portal AC Batista", layout="wide")
+
 # --- CONEXÃO COM O SUPABASE (POSTGRESQL NA NUVEM) ---
 @st.cache_resource
 def conectar_supabase():
@@ -29,7 +32,7 @@ def ler_dados_sql(query, params=None):
     if conn_db:
         try:
             return conn_db.query(query, params=params, ttl=0)
-        except Exception as e:
+        except Exception:
             return pd.DataFrame()
     return pd.DataFrame()
 
@@ -72,8 +75,7 @@ df_cot_reais = pd.DataFrame()
 @st.cache_data(ttl=600)
 def carregar_dados_planilha():
     try:
-        dados = buscar_dados_tabela_cache("media_venda_diaria")
-        return dados
+        return buscar_dados_tabela_cache("media_venda_diaria")
     except Exception:
         return []
 
@@ -85,7 +87,8 @@ def carregar_fornecedores_ativos():
             ativos = [str(row.get('FORNECEDOR', '')).strip() for row in dados if str(row.get('ATIVO', '')).strip().upper() == 'SIM']
             return ativos if ativos else ["FORNECEDOR PADRÃO"]
         return ["FORNECEDOR PADRÃO"]
-    except Exception: return ["FORNECEDOR PADRÃO"]
+    except Exception:
+        return ["FORNECEDOR PADRÃO"]
 
 @st.cache_data(ttl=300)
 def carregar_todos_fornecedores_cadastrados():
@@ -95,22 +98,19 @@ def carregar_todos_fornecedores_cadastrados():
             todos = [str(row.get('FORNECEDOR', '')).strip() for row in dados if str(row.get('FORNECEDOR', '')).strip()]
             return sorted(list(set(todos))) if todos else ["FORNECEDOR PADRÃO"]
         return ["FORNECEDOR PADRÃO"]
-    except Exception: return ["FORNECEDOR PADRÃO"]
+    except Exception:
+        return ["FORNECEDOR PADRÃO"]
 
 @st.cache_data(ttl=300)
 def carregar_catalogo_produtos_mapeamento():
     try:
         dados = buscar_dados_tabela_cache("produtos")
-        cod_para_prod = {}
-        prod_para_cod = {}
-        precos_base_map = {}
-        lista_nomes = []
+        cod_para_prod, prod_para_cod, precos_base_map, lista_nomes = {}, {}, {}, []
         if dados:
             for row in dados:
                 p_nome = str(row.get('PRODUTO', '')).strip().upper()
                 p_cod = str(row.get('CODIGO', '')).strip()
                 p_preco = row.get('PRECO_BASE', 0.0)
-                
                 try: p_preco_float = float(str(p_preco).replace(',', '.')) if p_preco else 0.0
                 except: p_preco_float = 0.0
 
@@ -121,9 +121,9 @@ def carregar_catalogo_produtos_mapeamento():
                         prod_para_cod[p_nome] = p_cod
                     if p_preco_float > 0:
                         precos_base_map[p_nome] = p_preco_float
-                        
         return cod_para_prod, prod_para_cod, sorted(list(set(lista_nomes))), precos_base_map
-    except Exception: return {}, {}, ["COXA SOLTEIRA PILÃO KG", "LINGUIÇA SUÍNA CHURRASCO", "SASSAMI KG"], {}
+    except Exception:
+        return {}, {}, ["COXA SOLTEIRA PILÃO KG", "LINGUIÇA SUÍNA CHURRASCO", "SASSAMI KG"], {}
 
 @st.cache_data(ttl=60)
 def carregar_de_para_fornecedores():
@@ -136,10 +136,8 @@ def carregar_de_para_fornecedores():
             cod_forn = str(row.get("CODIGO_ITEM_FORNECEDOR", "")).strip().replace("'", "")
             cod_interno = str(row.get("CODIGO_INTERNO", "")).strip().replace("'", "")
             nome_interno = str(row.get("PRODUTO_INTERNO", "")).strip()
-            
             if cnpj and cod_forn:
-                chave = f"{cnpj}_{cod_forn}"
-                mapeamento[chave] = {"CODIGO_INTERNO": cod_interno, "PRODUTO_INTERNO": nome_interno}
+                mapeamento[f"{cnpj}_{cod_forn}"] = {"CODIGO_INTERNO": cod_interno, "PRODUTO_INTERNO": nome_interno}
     return mapeamento
 
 @st.cache_data(ttl=300)
@@ -178,14 +176,12 @@ def carregar_dados_filiais_dict():
                 elif "CEP:" in l_up: cep = linha.split(":")[-1].strip()
                 elif "E-MAIL:" in l_up or "EMAIL:" in l_up: email = linha.split(":")[-1].strip()
                 elif not any(x in l_up for x in ["CNPJ:", "ESTADUAL:", "CEP:", "E-MAIL:", "EMAIL:"]) and linha != razao:
-                    if not endereco: endereco = linha
-                    else: endereco += " - " + linha
-                        
-            filial_key = nome_filial.upper()
-            filiais_map[filial_key] = {
-                "RAZAO": razao, "CNPJ": cnpj if cnpj else "06.121.429/0008-90",
-                "IE": ie if ie else "625274795.07.43", "ENDERECO": endereco if endereco else "SÃO JOÃO DEL REI/MG",
-                "CEP": cep if cep else "36300-168", "EMAIL": email if email else "comprasacbatista@gmail.com"
+                    endereco = linha if not endereco else endereco + " - " + linha
+            
+            filiais_map[nome_filial.upper()] = {
+                "RAZAO": razao, "CNPJ": cnpj or "06.121.429/0008-90",
+                "IE": ie or "625274795.07.43", "ENDERECO": endereco or "SÃO JOÃO DEL REI/MG",
+                "CEP": cep or "36300-168", "EMAIL": email or "comprasacbatista@gmail.com"
             }
     return filiais_map
 
@@ -207,12 +203,9 @@ def normalizar_nome_produto(nome):
     n = unicodedata.normalize('NFKD', n).encode('ASCII', 'ignore').decode('utf-8')
     for prep in [" DE ", " DA ", " DO ", " COM "]:
         n = n.replace(prep, " ")
-    remover = [" CONGELADO", " CONGELADA", " RESFRIADO", " RESFRIADA", " IN NATURA", " KG", " KGS", " UNID", " UN"]
-    for r in remover:
+    for r in [" CONGELADO", " CONGELADA", " RESFRIADO", " RESFRIADA", " IN NATURA", " KG", " KGS", " UNID", " UN"]:
         n = n.replace(r, "")
     return " ".join(n.split()).strip()
-
-st.set_page_config(page_title="Portal AC Batista", layout="wide")
 
 def validar_usuario_supabase(usuario, senha):
     if conn_db is None: return None, "❌ Erro: Não foi possível conectar ao banco de dados Supabase."
@@ -230,12 +223,12 @@ def validar_usuario_supabase(usuario, senha):
                     'FILIAL': str(linha.get('filial', '')).strip().upper(),
                     'NIVEL': str(linha.get('nivel', '')).strip().upper() 
                 }, None
-            else: return None, "❌ Palavra-passe incorreta. Tenta novamente."
+            else: return None, "❌ Senha incorreta. Tente novamente."
     except Exception as e: return None, f"❌ Erro crítico ao conectar à base de dados: {e}"
-    return None, "❌ Utilizador não localizado."
+    return None, "❌ Usuário não localizado."
 
 # =========================================================================
-# 🛑 TELA DE LOGIN ISOLADA (ESTÁVEL PARA TELEMÓVEL E PC)
+# 🛑 TELA DE LOGIN
 # =========================================================================
 container_login = st.empty()
 
@@ -244,24 +237,9 @@ if not st.session_state.get('logado', False):
         st.markdown("""
             <style>
                 [data-test-id="stSidebar"] { display: none !important; }
-                .stMainBlockContainer { 
-                    max-width: 450px; 
-                    margin: 0 auto; 
-                    padding-top: 4rem; 
-                }
-                .login-title {
-                    color: #004A99;
-                    font-weight: 700;
-                    text-align: center;
-                    margin-bottom: 0.2rem;
-                    font-size: 1.8rem;
-                }
-                .login-subtitle {
-                    color: #666666;
-                    text-align: center;
-                    margin-bottom: 2rem;
-                    font-size: 0.95rem;
-                }
+                .stMainBlockContainer { max-width: 450px; margin: 0 auto; padding-top: 4rem; }
+                .login-title { color: #004A99; font-weight: 700; text-align: center; margin-bottom: 0.2rem; font-size: 1.8rem; }
+                .login-subtitle { color: #666666; text-align: center; margin-bottom: 2rem; font-size: 0.95rem; }
             </style>
         """, unsafe_allow_html=True)
         
@@ -271,8 +249,6 @@ if not st.session_state.get('logado', False):
         with st.form("form_login_ac_batista"):
             usuario = st.text_input("Usuário", key="txt_usuario_final", placeholder="Digite o seu usuário")
             senha = st.text_input("Senha", type="password", key="txt_senha_final", placeholder="Digite a sua senha")
-            
-            st.markdown("<div style='margin-top: 1rem;'></div>", unsafe_allow_html=True)
             botao_submeter = st.form_submit_button("Acessar", use_container_width=True)
 
             if botao_submeter:
@@ -298,6 +274,7 @@ if not st.session_state.get('logado', False):
                         else:
                             st.session_state.nivel = "Nutricionista"
                             st.session_state.filial_nome = nome_empresa
+                        
                         st.cache_data.clear()
                         st.rerun()
 
@@ -341,59 +318,47 @@ def tratar_preco_float(valor):
     try: 
         if isinstance(valor, (int, float)): 
             val = float(valor)
-            if val >= 100 and val % 1 == 0 and val not in [100, 200, 500, 1000]: 
-                return val / 100.0
-            elif val >= 40 and val < 100 and val % 1 == 0: 
-                return val / 10.0
+            if val >= 100 and val % 1 == 0 and val not in [100, 200, 500, 1000]: return val / 100.0
+            elif val >= 40 and val < 100 and val % 1 == 0: return val / 10.0
             return val
         
         v_str = str(valor).replace("R$", "").strip()
         if not v_str or v_str.lower() == 'nan': return 0.0
         
         if "," in v_str and "." in v_str:
-            if v_str.rfind(",") > v_str.rfind("."): 
-                v_str = v_str.replace(".", "").replace(",", ".")
-            else: 
-                v_str = v_str.replace(",", "")
-        elif "," in v_str and "." not in v_str: 
+            if v_str.rfind(",") > v_str.rfind("."): v_str = v_str.replace(".", "").replace(",", ".")
+            else: v_str = v_str.replace(",", "")
+        elif "," in v_str and "." not in v_str:
             v_str = v_str.replace(",", ".")
             
         num = float(v_str)
-        if num >= 100 and num % 1 == 0 and num not in [100, 200, 500, 1000]:
-            return num / 100.0
-        elif num >= 40 and num < 100 and num % 1 == 0: 
-            return num / 10.0
+        if num >= 100 and num % 1 == 0 and num not in [100, 200, 500, 1000]: return num / 100.0
+        elif num >= 40 and num < 100 and num % 1 == 0: return num / 10.0
         return num
     except: return 0.0
 
 def tratar_qtd_float(valor):
     try:
-        if isinstance(valor, (int, float)):
-            return float(valor)
+        if isinstance(valor, (int, float)): return float(valor)
         v_str = str(valor).replace("R$", "").replace("kg", "").replace("KG", "").strip()
         if not v_str or v_str.lower() == 'nan': return 0.0
         if "," in v_str and "." in v_str:
-            if v_str.rfind(",") > v_str.rfind("."): 
-                v_str = v_str.replace(".", "").replace(",", ".")
-            else: 
-                v_str = v_str.replace(",", "")
-        elif "," in v_str and "." not in v_str: 
+            if v_str.rfind(",") > v_str.rfind("."): v_str = v_str.replace(".", "").replace(",", ".")
+            else: v_str = v_str.replace(",", "")
+        elif "," in v_str and "." not in v_str:
             v_str = v_str.replace(",", ".")
         return float(v_str)
     except: return 0.0
 
 def tratar_peso_float(valor):
     try:
-        if isinstance(valor, (int, float)):
-            return float(valor)
+        if isinstance(valor, (int, float)): return float(valor)
         v_str = str(valor).replace("R$", "").strip()
         if not v_str or v_str.lower() == 'nan': return 1.0
         if "," in v_str and "." in v_str:
-            if v_str.rfind(",") > v_str.rfind("."): 
-                v_str = v_str.replace(".", "").replace(",", ".")
-            else: 
-                v_str = v_str.replace(",", "")
-        elif "," in v_str and "." not in v_str: 
+            if v_str.rfind(",") > v_str.rfind("."): v_str = v_str.replace(".", "").replace(",", ".")
+            else: v_str = v_str.replace(",", "")
+        elif "," in v_str and "." not in v_str:
             v_str = v_str.replace(",", ".")
         return float(v_str)
     except: return 1.0
@@ -409,13 +374,13 @@ def gerar_pdf_pedido(num_pedido, filial_nome, dados_filial, forn_alvo, telefone_
     estilo_corpo = ParagraphStyle('Corpo', parent=styles['Normal'], fontSize=8.5, textColor=colors.HexColor('#222222'), spaceAfter=3)
     estilo_aviso_box = ParagraphStyle('AvisoBox', parent=styles['Normal'], fontSize=9, textColor=colors.HexColor('#900C3F'), fontName='Helvetica-Bold', alignment=1, leading=12)
     
-    story.append(Paragraph("<b>👨‍🍳 AC BATISTA ALIMENTAÇÃO</b>", estilo_titulo))
-    story.append(Paragraph(f"<b>{dados_filial['RAZAO']}</b><br/>CNPJ Faturamento: {dados_filial['CNPJ']} | Inscrição Estadual: {dados_filial['IE']}<br/>{dados_filial['ENDERECO']} - CEP: {dados_filial['CEP']}<br/>E-mail: {dados_filial['EMAIL']}", estilo_sub))
+    story.append(Paragraph("<b>👨🍳 AC BATISTA ALIMENTAÇÃO</b>", estilo_titulo))
+    story.append(Paragraph(f"<b>{dados_filial['RAZAO']}</b><br/>CNPJ: {dados_filial['CNPJ']} | IE: {dados_filial['IE']}<br/>{dados_filial['ENDERECO']} - CEP: {dados_filial['CEP']}<br/>E-mail: {dados_filial['EMAIL']}", estilo_sub))
     
     info_data = [
         [
-            Paragraph(f"<b>Fornecedor:</b> {forn_alvo}<br/><b>Telefone Contato:</b> {telefone_forn}<br/><b>Prazo de Pagamento:</b> {prazo_pgto}", estilo_corpo),
-            Paragraph(f"<b>Pedido Nº:</b> {num_pedido}<br/><b>Data e Hora:</b> {dt_mod.now().strftime('%d/%m/%Y %H:%M')}<br/><b>Previsão de Entrega:</b> {data_entrega.strftime('%d/%m/%Y')}", estilo_corpo)
+            Paragraph(f"<b>Fornecedor:</b> {forn_alvo}<br/><b>Telefone:</b> {telefone_forn}<br/><b>Prazo Pgto:</b> {prazo_pgto}", estilo_corpo),
+            Paragraph(f"<b>Pedido Nº:</b> {num_pedido}<br/><b>Data:</b> {dt_mod.now().strftime('%d/%m/%Y %H:%M')}<br/><b>Previsão de Entrega:</b> {data_entrega.strftime('%d/%m/%Y')}", estilo_corpo)
         ]
     ]
     t_info = Table(info_data, colWidths=[270, 270])
@@ -460,7 +425,7 @@ def gerar_pdf_pedido(num_pedido, filial_nome, dados_filial, forn_alvo, telefone_
     story.append(Spacer(1, 12))
     
     aviso_texto = "<b>⚠️ ATENÇÃO: INFORMAÇÃO DE ENTREGA OBRIGATÓRIA ⚠️</b><br/>" \
-                  "ENTREGAS DE MERCADORIAS APENAS NOS HORÁRIOS DE SEGUNDA A SEXTA<br/>" \
+                  "ENTREGAS APENAS DE SEGUNDA A SEXTA<br/>" \
                   "<b>MANHÃ: 07:00 AS 10:30hrs</b> &nbsp;|&nbsp; <b>TARDE: 14:00 AS 15:00hrs</b>"
     
     t_aviso = Table([[Paragraph(aviso_texto, estilo_aviso_box)]], colWidths=[540])
@@ -514,8 +479,12 @@ def consolidar_proteina_semanal_geral(restaurante_filtro="Todos"):
             st.success("✅ Guardado com sucesso!")
             st.cache_data.clear(); time_lib.sleep(1); st.rerun()
         except Exception as e: st.error(f"Erro: {e}")
-        def modulo_cotacao_consolidacao(): 
-         st.title("📊 Cotação & Consolidação") 
+
+# =========================================================================
+# 💼 MÓDULO DE COTAÇÃO & CONSOLIDAÇÃO (DIRETOR JARDEL)
+# =========================================================================
+def modulo_cotacao_consolidacao(): 
+    st.title("📊 Cotação & Consolidação") 
     st.markdown("## ⚙ Painel de Distribuição de Suprimentos") 
     st.info("Espaço destinado ao gerenciamento logístico de insumos e fechamento de cargas do Diretor Jardel.") 
     
@@ -524,8 +493,7 @@ def consolidar_proteina_semanal_geral(restaurante_filtro="Todos"):
         with col_p1: data_limite = st.date_input("Data Limite de Cotação", value=date.today(), key="dt_limite_diretor")
         with col_p2: hora_limite = st.time_input("Horário Limite", value=time_mod(9, 0, 0), key="hr_limite_diretor")
         with col_p3:
-            st.write("")
-            st.write("")
+            st.write(""); st.write("")
             if st.button("⏰ Prorrogar Prazo (+2 Horas)", use_container_width=True, key="btn_prorrogar_prazo"):
                 st.success("✅ Prazo prorrogado com sucesso para os fornecedores!")
         
@@ -555,7 +523,7 @@ def consolidar_proteina_semanal_geral(restaurante_filtro="Todos"):
         if not dados_cotacao_brutos: 
             st.info("ℹ️ Nenhuma proposta de cotação encontrada na tabela bd_cotacao para o lote atual.")
             df_bruto = pd.DataFrame()
-        else:
+        else: 
             df_bruto = pd.DataFrame(dados_cotacao_brutos) 
             df_bruto.columns = [str(c).strip().upper() for c in df_bruto.columns] 
 
@@ -578,8 +546,7 @@ def consolidar_proteina_semanal_geral(restaurante_filtro="Todos"):
                     
                     if "STATUS_VALIDACAO" in df_auditoria_total.columns:
                         df_validos = df_auditoria_total[df_auditoria_total["STATUS_VALIDACAO"].astype(str).str.upper().isin(["APROVADO", "CONCLUÍDO FILIAL", "DENTRO DO LIMITE", "⚠ EXCEÇÃO (ESTOURADO)"])]
-                        if df_validos.empty:
-                            df_validos = df_auditoria_total
+                        if df_validos.empty: df_validos = df_auditoria_total
                     else:
                         df_validos = df_auditoria_total
 
@@ -682,8 +649,7 @@ def consolidar_proteina_semanal_geral(restaurante_filtro="Todos"):
                             if chave_col in f_reg and str(f_reg[chave_col]).strip().isdigit():
                                 dias_e = int(str(f_reg[chave_col]).strip())
                                 break
-                        if nome_f:
-                            prazos_entrega_forn[nome_f.upper()] = {"telefone": tel_f, "dias_entrega": dias_e}
+                        if nome_f: prazos_entrega_forn[nome_f.upper()] = {"telefone": tel_f, "dias_entrega": dias_e}
 
                 if "df_jardel_decisao_salvo" in st.session_state and "colunas_fornecedores_ativos" in st.session_state:
                     df_dec = st.session_state["df_jardel_decisao_salvo"]
@@ -695,8 +661,7 @@ def consolidar_proteina_semanal_geral(restaurante_filtro="Todos"):
                         
                         if "STATUS_VALIDACAO" in df_aud_conf.columns:
                             df_aprov_conf = df_aud_conf[df_aud_conf["STATUS_VALIDACAO"].astype(str).str.upper().isin(["APROVADO", "CONCLUÍDO FILIAL", "DENTRO DO LIMITE", "⚠ EXCEÇÃO (ESTOURADO)"])].copy()
-                        else:
-                            df_aprov_conf = df_aud_conf.copy()
+                        else: df_aprov_conf = df_aud_conf.copy()
 
                         if not df_aprov_conf.empty and "RESTAURANTE" in df_aprov_conf.columns:
                             lista_filiais_disponiveis = sorted(df_aprov_conf["RESTAURANTE"].dropna().astype(str).str.strip().unique().tolist())
@@ -714,7 +679,6 @@ def consolidar_proteina_semanal_geral(restaurante_filtro="Todos"):
                                     for _, row_i in df_itens_filial.iterrows():
                                         produto_nome = str(row_i.get("PRODUTO", "")).strip()
                                         qtd_nutri_original = tratar_qtd_float(row_i.get("PEDIDO_NUTRICIONISTA", 0.0))
-
                                         vencedor_aba2 = forn_lista[0] if forn_lista else "FORNECEDOR PADRÃO"
                                         l_dec = df_dec[df_dec["PRODUTO"] == produto_nome]
                                         
@@ -827,7 +791,7 @@ def consolidar_proteina_semanal_geral(restaurante_filtro="Todos"):
                                             data_prevista_auto = date.today() + timedelta(days=dias_uteis_entrega)
                                             
                                             with st.container(border=True):
-                                                st.markdown(f"### 👨‍🍳 Pedido Nº {idx_f+1:04d} para **{forn_alvo}** ({filial_selecionada_aba3})")
+                                                st.markdown(f"### 👨🍳 Pedido Nº {idx_f+1:04d} para **{forn_alvo}** ({filial_selecionada_aba3})")
                                                 st.markdown(f"📞 **Telefone:** {tel_fornecedor} | 💳 **Prazo:** {prazo_forn} | 🚚 **Previsão:** {data_prevista_auto.strftime('%d/%m/%Y')}")
                                                 
                                                 st.dataframe(df_tabela_espelho, use_container_width=True, hide_index=True, column_config={
@@ -895,6 +859,9 @@ def consolidar_proteina_semanal_geral(restaurante_filtro="Todos"):
     except Exception as erro_modulo_compras: 
         st.error(f"❌ Erro ao processar o painel: {erro_modulo_compras}")
 
+# =========================================================================
+# 🥗 LANÇAMENTO DE PROTEÍNAS (NUTRICIONISTA / FILIAL)
+# =========================================================================
 def interface_lancamento_proteina_filial(filial_passada="CENTRO"):
     try:
         st.subheader("📋 Digitação Semanal por Filial")
@@ -1010,11 +977,16 @@ def interface_lancamento_proteina_filial(filial_passada="CENTRO"):
     except Exception as erro_mod: 
         st.error(f"❌ Erro: {erro_mod}")
 
+# =========================================================================
+# 🧭 ROTEAMENTO PRINCIPAL E CONTROLE DE ACESSO
+# =========================================================================
 if conn_db is None: conn_db = conectar_supabase()
 if st.session_state.get('logado', False):
     st.sidebar.write(f"👤 Utilizador: **{st.session_state.get('usuario', 'Nenhum')}**")
     st.sidebar.write(f"🔑 Acesso: **{st.session_state.get('nivel', 'Comum')}**")
-    if st.sidebar.button("🚪 Sair/Logoff"): st.session_state.logado = False; st.rerun()
+    if st.sidebar.button("🚪 Sair/Logoff"): 
+        st.session_state.logado = False
+        st.rerun()
 
 if not st.session_state.get('logado', False): st.stop()
 st.sidebar.write("---")
@@ -1048,7 +1020,11 @@ if modulo_selecionado == "🔍 Conferência e Consolidação":
 elif modulo_selecionado == "🥗 Lançamento de Pedidos":
     interface_lancamento_proteina_filial()
 
+elif modulo_selecionado == "📊 Cotação & Consolidação":
+    modulo_cotacao_consolidacao()
+
 elif modulo_selecionado == "🤝 Portal de Cotação":
     st.title("🤝 Portal do Fornecedor")
     fornecedor_logado = st.session_state.get('filial_nome', 'FORNECEDOR PADRÃO')
     st.success(f"🏢 Empresa Logada: {fornecedor_logado}")
+    st.info("Aguardando inserção ou upload da tabela de cotação/XML do fornecedor.")

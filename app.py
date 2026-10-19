@@ -13,8 +13,75 @@ from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
 from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
 import unicodedata
 
-# --- CONFIGURAÇÃO DA PÁGINA ---
+# --- CONFIGURAÇÃO DA PÁGINA E NOVO VISUAL SPARK ---
 st.set_page_config(page_title="Portal AC Batista", layout="wide")
+
+st.markdown("""
+    <style>
+        /* Variáveis de Cor do HTML Original do Spark */
+        :root {
+            --primary: #1F497D;
+            --primary-hover: #16365C;
+            --success: #27AE60;
+            --warning: #F39C12;
+            --danger: #E74C3C;
+            --info: #2980B9;
+            --bg-light: #F4F6F9;
+            --border: #E2E8F0;
+        }
+        
+        /* Fundo da aplicação */
+        .stApp { background-color: var(--bg-light); }
+        
+        /* Sidebar estilizada (Azul Escuro) */
+        [data-testid="stSidebar"] {
+            background-color: var(--primary) !important;
+        }
+        [data-testid="stSidebar"] * {
+            color: #FFFFFF !important;
+        }
+        
+        /* Estilo dos Botões Principais */
+        .stButton>button {
+            background-color: var(--primary) !important;
+            color: white !important;
+            border-radius: 8px !important;
+            height: 3em !important;
+            font-weight: 600 !important;
+            border: none !important;
+            transition: all 0.2s ease !important;
+        }
+        .stButton>button:hover {
+            background-color: var(--primary-hover) !important;
+            border-left: 4px solid #F1C40F !important;
+            color: white !important;
+        }
+        
+        /* Cabeçalho das abas (Tabs) */
+        .stTabs [data-baseweb="tab-list"] {
+            background-color: #FFFFFF;
+            padding: 10px 20px 0px 20px;
+            border-radius: 8px 8px 0 0;
+            border: 1px solid var(--border);
+        }
+        .stTabs [data-baseweb="tab"] {
+            color: #2C3E50;
+            font-weight: 600;
+        }
+        
+        /* Tabelas e Dataframes */
+        [data-testid="stDataFrame"] {
+            background: #FFFFFF;
+            border-radius: 8px;
+            border: 1px solid var(--border);
+            padding: 10px;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.08);
+        }
+        
+        /* Títulos com a cor primária */
+        h1, h2, h3 { color: var(--primary) !important; font-weight: 600; }
+    </style>
+""", unsafe_allow_html=True)
 
 # --- CONEXÃO COM O SUPABASE (POSTGRESQL NA NUVEM) ---
 @st.cache_resource
@@ -238,7 +305,7 @@ if not st.session_state.get('logado', False):
             <style>
                 [data-test-id="stSidebar"] { display: none !important; }
                 .stMainBlockContainer { max-width: 450px; margin: 0 auto; padding-top: 4rem; }
-                .login-title { color: #004A99; font-weight: 700; text-align: center; margin-bottom: 0.2rem; font-size: 1.8rem; }
+                .login-title { color: #1F497D; font-weight: 700; text-align: center; margin-bottom: 0.2rem; font-size: 1.8rem; }
                 .login-subtitle { color: #666666; text-align: center; margin-bottom: 2rem; font-size: 0.95rem; }
             </style>
         """, unsafe_allow_html=True)
@@ -277,8 +344,6 @@ if not st.session_state.get('logado', False):
                         
                         st.cache_data.clear()
                         st.rerun()
-
-st.markdown("""<style>.stButton>button { background-color: #004A99; color: white; width: 100%; border-radius: 5px; height: 3em; font-weight: bold; } .stButton>button:hover { background-color: #003366; color: white; }</style>""", unsafe_allow_html=True)
 
 @st.cache_data(ttl=60)
 def ler_status_digitacao():
@@ -982,6 +1047,14 @@ def interface_lancamento_proteina_filial(filial_passada="CENTRO"):
 # =========================================================================
 if conn_db is None: conn_db = conectar_supabase()
 if st.session_state.get('logado', False):
+    # NOVO CABEÇALHO DA SIDEBAR BASEADO NO SEU SPARK
+    st.sidebar.markdown("""
+        <div style='padding: 10px 0; border-bottom: 1px solid rgba(255,255,255,0.1); margin-bottom: 20px;'>
+            <h2 style='color:white !important; margin:0; font-size: 1.2rem;'>Sistema Integrado</h2>
+            <p style='color:rgba(255,255,255,0.7) !important; margin:0; font-size: 0.8rem;'>AC Batista ERP</p>
+        </div>
+    """, unsafe_allow_html=True)
+    
     st.sidebar.write(f"👤 Utilizador: **{st.session_state.get('usuario', 'Nenhum')}**")
     st.sidebar.write(f"🔑 Acesso: **{st.session_state.get('nivel', 'Comum')}**")
     if st.sidebar.button("🚪 Sair/Logoff"): 

@@ -275,25 +275,36 @@ def normalizar_nome_produto(nome):
     return " ".join(n.split()).strip()
 
 def validar_usuario_supabase(usuario, senha):
-    if conn_db is None: return None, "❌ Erro: Não foi possível conectar ao banco de dados Supabase."
+    if conn_db is None: 
+        return None, "❌ Erro Crítico: A ligação `conn_db` ao Supabase é None (Verifique os Secrets)."
+    
     u_in = str(usuario).strip()
     s_in = str(senha).strip()
+    
     try:
-        query = "SELECT * FROM bd_usuarios WHERE TRIM(usuario) = :user"    
+        query = "SELECT usuario, senha, nivel, filial FROM bd_usuarios WHERE TRIM(usuario) = :user"
         df_user = ler_dados_sql(query, {"user": u_in})
-        if not df_user.empty:
-            linha = df_user.iloc[0]
-            senha_tabela = str(linha.get('senha', '')).strip()
-            if senha_tabela == s_in:
-                return {
-                    'USUARIO': str(linha.get('usuario', '')).strip(),
-                    'FILIAL': str(linha.get('filial', '')).strip().upper(),
-                    'NIVEL': str(linha.get('nivel', '')).strip().upper() 
-                }, None
-            else: return None, "❌ Senha incorreta. Tente novamente."
-    except Exception as e: return None, f"❌ Erro crítico ao conectar à base de dados: {e}"
-    return None, "❌ Usuário não localizado."
-
+        
+        if df_user is None:
+            return None, "❌ Erro: A função `ler_dados_sql` retornou None."
+            
+        if df_user.empty:
+            return None, f"❌ Utilizador '{u_in}' não encontrado na tabela bd_usuarios."
+            
+        linha = df_user.iloc[0]
+        senha_tabela = str(linha.get('senha', '')).strip()
+        
+        if senha_tabela == s_in:
+            return {
+                'USUARIO': str(linha.get('usuario', '')).strip(),
+                'FILIAL': str(linha.get('filial', '')).strip().upper(),
+                'NIVEL': str(linha.get('nivel', '')).strip().upper() 
+            }, None
+        else: 
+            return None, "❌ Senha incorreta para o utilizador encontrado."
+            
+    except Exception as e: 
+        return None, f"❌ Erro detetado no SQL: {e}"
 # =========================================================================
 # 🛑 TELA DE LOGIN
 # =========================================================================

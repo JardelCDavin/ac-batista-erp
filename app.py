@@ -276,10 +276,10 @@ def normalizar_nome_produto(nome):
 
 def validar_usuario_supabase(usuario, senha):
     if conn_db is None: return None, "❌ Erro: Não foi possível conectar ao banco de dados Supabase."
-    u_in = str(usuario).strip().upper()
+    u_in = str(usuario).strip()
     s_in = str(senha).strip()
     try:
-        query = "SELECT * FROM bd_usuarios WHERE UPPER(TRIM(usuario)) = :user"
+        query = "SELECT * FROM bd_usuarios WHERE TRIM(usuario) = :user"    
         df_user = ler_dados_sql(query, {"user": u_in})
         if not df_user.empty:
             linha = df_user.iloc[0]

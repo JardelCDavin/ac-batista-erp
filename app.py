@@ -99,7 +99,8 @@ def ler_dados_sql(query, params=None):
     if conn_db:
         try:
             return conn_db.query(query, params=params, ttl=0)
-        except Exception:
+        except Exception as e:
+            st.error(f"Erro na leitura SQL: {e}")
             return pd.DataFrame()
     return pd.DataFrame()
 
@@ -282,8 +283,9 @@ def validar_usuario_supabase(usuario, senha):
     s_in = str(senha).strip()
     
     try:
-        query = "SELECT usuario, senha, nivel, filial FROM bd_usuarios WHERE TRIM(usuario) = :user"
-        df_user = ler_dados_sql(query, {"user": u_in})
+        # Consulta direta para evitar falhas de parâmetros no leitor SQL
+        query = f"SELECT usuario, senha, nivel, filial FROM bd_usuarios WHERE TRIM(usuario) = '{u_in}'"
+        df_user = ler_dados_sql(query)
         
         if df_user is None:
             return None, "❌ Erro: A função `ler_dados_sql` retornou None."
@@ -301,10 +303,11 @@ def validar_usuario_supabase(usuario, senha):
                 'NIVEL': str(linha.get('nivel', '')).strip().upper() 
             }, None
         else: 
-            return None, "❌ Senha incorreta para o utilizador encontrado."
+            return None, "❌ Senha incorreta. Tente novamente."
             
     except Exception as e: 
         return None, f"❌ Erro detetado no SQL: {e}"
+
 # =========================================================================
 # 🛑 TELA DE LOGIN
 # =========================================================================
